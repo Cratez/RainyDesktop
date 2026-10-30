@@ -1,4 +1,4 @@
-# raindesk
+# RainDesk
 
 Rain on the glass of your monitor.
 
