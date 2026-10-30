@@ -40,6 +40,7 @@ public:
     void Clear();  // wipe the glass
     void Update(float dt);
     void AddDrop(float x, float y, float r) { Spawn(x, y, r); }  // for tests and tools
+    float WaterOnGlass() const;  // drops and rivulets, as volume (sum of r^3); for tests
 
     // Tunables, all 1.0 = default.
     float intensity = 1.0f;  // how hard it rains
@@ -49,6 +50,8 @@ public:
     float minDrop = 2.5f;    // smallest raindrop radius, pixels at 1440p
     float maxDrop = 11.5f;   // largest raindrop radius, pixels at 1440p
     float streakLife = 1.0f; // how long rivulets last before they drain and break up
+    float wind = 0.0f;       // steady wind along the glass, + blows to the right; about -3..3
+    float gusts = 1.0f;      // how much the wind gusts and lulls around that, 0..2
 
     // A windscreen wiper pivoting below the bottom edge sweeps across and
     // back, pushing water ahead of the blade and off the screen.
@@ -103,14 +106,19 @@ private:
     void Merge(Drop& into, Drop& from);
     void ResetShape(Drop& d, bool ragged);
     void Steer(Drop& d);
+    void UpdateWind(float dt);
+    float WindAt(float x, float y) const;    // wind along the glass at a point, same scale as `wind`
+    float Tilt(const Drop& d) const;         // sideways push on a drop relative to its weight
     void UpdateRivulets(float dt);
-    void EraseRivulets(float x, float y, float radius, int skip = -1);
+    float EraseRivulets(float x, float y, float radius, int skip = -1);  // returns the water soaked up
 
     // A thin line of water a running drop leaves behind it, as a chain of
     // nodes about a pixel apart.
     struct RivuletNode {
         float x, y;
         float w0;      // half-width when laid down, pixels
+        float water;   // water held, as volume in the same units as a drop's r^3
+        float water0;  // water when laid down
         float born;    // time_ when laid down
         float along;   // distance from the rivulet's start, pixels
         float w = 0;   // current half-width
@@ -121,10 +129,12 @@ private:
         float wavelength;  // spacing of the segments it pinches into
         float phase;
         float wobble;      // phase of the sideways meander
+        float carry = 0;   // water the drop has given up that no node holds yet
         float minX, minY, maxX, maxY;  // bounds, for cheap overlap tests
         bool open = true;  // still being drawn out by its drop
     };
     void LayRivulet(Drop& d, float step);
+    void BeadUp(Rivulet& rv, int a, int b);
 
     // Glass surface, on a coarse grid.
     void BuildSurface();
@@ -136,6 +146,9 @@ private:
     float w_ = 0, h_ = 0, s_ = 1;  // screen size, and scale relative to 1440p
     float time_ = 0;
     float dropAccum_ = 0, mistAccum_ = 0;
+    float runnerAccum_ = 0;              // drops running down into view from above the screen
+    float gustSlow_ = 0, gustFast_ = 0;  // smoothed random gust state
+    float windNow_ = 0;                  // wind with gusts, this frame
     std::mt19937 rng_{std::random_device{}()};
     std::vector<Drop> live_;
 

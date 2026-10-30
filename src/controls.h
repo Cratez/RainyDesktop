@@ -21,6 +21,8 @@ struct Settings {
     float minDrop = 2.5f;    // smallest raindrop radius, pixels at 1440p
     float maxDrop = 11.5f;   // largest raindrop radius, pixels at 1440p
     float streakLife = 1.0f; // how long rivulet trails last before they break up
+    float wind = 0.0f;       // steady wind along the glass, + blows right, -3..3
+    float gusts = 1.0f;      // how much the wind gusts around that, 0..2
     int autoWipeMinutes = 0; // 0 = off
     bool paused = false;     // no new rain
     bool hidden = false;     // overlay hidden

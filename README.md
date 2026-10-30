@@ -48,6 +48,8 @@ overflow arrow).
 | Running speed | Scales how fast running drops travel. |
 | Smallest / largest raindrop | Size range of raindrops when they land (diameters assume a 27" 1440p screen). |
 | Streak life | How long the thin trails behind running drops last before they break into droplets and drain away. |
+| Wind | Steady wind along the glass, left or right. Rain hits at an angle and skids, and drops run at a slant. |
+| Gustiness | How much the wind gusts and lulls around the Wind setting. Gusts also bring bursts of heavier rain. |
 | Pause rain | Stops new rain. Water already on the glass keeps behaving. |
 
 Settings apply immediately and are saved in `raindesk.ini` next to the exe.

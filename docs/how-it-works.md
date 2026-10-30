@@ -103,17 +103,27 @@ The pane itself has two properties on a coarse grid of 6 px cells:
 
 ### Lifecycle of a drop
 
-**Landing.** Rain arrives at `10 × rain amount` drops per second, with radius
-between the smallest and largest raindrop settings, biased toward small drops.
-About a third of impacts throw a spray of small satellites. A drop that lands
-touching another drop merges into it.
+**Landing.** Rain arrives at `10 × rain amount` drops per second, more during
+gusts. Radii fall between the smallest and largest raindrop settings, biased
+toward small drops. Some drops hit the glass head on and simply appear, and
+about a third of those throw a spray of small satellites. The rest arrive at a
+glancing angle (more of them the stronger the wind; see Wind below). These
+skid a few millimetres in the direction of travel, leave a couple of fine
+droplets along the skid, and settle as a head with a thinning tail behind it.
+About half throw their splash forward in a cone. A drop that lands touching
+another drop merges into it.
+
+**From above.** The pane carries on above the screen, so now and then a drop
+that gathered up there runs down into view from the top edge.
 
 **Resting.** A resting drop:
 - grows slowly as it gathers mist around it, and clears the mist under itself
   every few seconds;
 - merges with any resting neighbour it touches;
 - keeps the shapes of the drops that merged into it (see Shapes below);
-- sags longer and narrower as it gets close to letting go.
+- sags longer and narrower as it gets close to letting go;
+- slowly evaporates. While it rains, gathering mist outpaces this. Once the
+  rain stops, the smallest drops go first, over a minute or two.
 
 **Letting go.** Each drop lets go at its own **release radius**:
 
@@ -147,8 +157,9 @@ While running, a drop:
   then speeds up because it is heavier.
 - **sheds water.** On dry glass the trailing film breaks into a line of beads.
   Fast drops leave them further apart, and drops on a wet path leave fewer.
-  About half of runs (`streaky`) also draw out a thin **rivulet** (see
-  below), which slowly drains the drop.
+  About half of the runs of large drops (`streaky`) also draw out a thin
+  **rivulet** (see below), which slowly drains the drop. Small drops have too
+  little water to spare and leave only beads.
 - **stops** once it has shed below its sliding size, unless it is on a wet
   path, and becomes a resting drop again.
 - leaves the simulation when it runs off the screen.
@@ -168,7 +179,8 @@ drops never get that far, because they let go well before it.
 
 `LayRivulet`, `UpdateRivulets`, `EraseRivulets`
 
-A rivulet is a thin line of water about half a drop wide, kept as a chain of
+A rivulet is a thin line of water about half a drop wide (never thinner than
+about 4 px), kept as a chain of
 nodes about a pixel apart. It meanders slightly and its width wanders. Each
 frame the nodes are drawn as small drop splats, so the rivulet refracts like
 any other water. A rivulet left on the glass is unstable and goes through
@@ -178,14 +190,62 @@ these stages, each scaled by the **Streak life** setting:
 2. **Pinching.** Surface tension (the Plateau-Rayleigh instability) swells
    the rivulet into bulges about twenty widths apart and thins the necks
    between them. A neck that gets too thin snaps.
-3. **Beading up.** A segment that has pinched off pulls itself into one round
-   droplet of the same water, which then stays on the glass like any other
-   drop.
-4. **Draining.** From about 3.5 s on, what is left thins out and disappears.
+3. **Beading up.** A segment that has pinched off pulls itself into one
+   droplet holding exactly its water: an oval along the line at first, which
+   rounds out slowly like any other resting drop.
+4. **Draining.** From about 2.5 s on, water flows down the line, so the top
+   thins and runs dry while lower pieces fatten. A neck that snaps hands its
+   water to the piece below it. Whatever is still joined up after about 7 s
+   beads up too, one droplet per wavelength.
 
 Because the top of a rivulet is the oldest part, the stages travel down it:
 the top drains, the middle pinches into segments, and the newest part is still
-a continuous line. Later drops and the wiper soak up any rivulet they cross.
+a continuous line. What is left in the end is a dotted line of droplets along
+the path, which later drops tend to follow and sweep up. Later drops and the wiper soak up any rivulet they cross.
+
+### Wind
+
+`UpdateWind`, `WindAt`, `Tilt`
+
+The **Wind** setting is a steady wind along the glass (negative blows left).
+Around it, **Gustiness** adds two smoothed random signals: a slow one that
+swells and lulls over several seconds and a quick one that buffets. Gust fronts
+also sweep across the screen, so the wind is never quite the same everywhere.
+
+The wind does four things:
+
+- **Angled impacts.** It sets how many raindrops arrive at a glancing angle
+  and which way they skid.
+- **Letting go.** Wind drag on a drop grows with its frontal area (r²) and its
+  weight with its volume (r³), so the wind's sideways pull relative to the
+  drop's weight, the tilt, is larger for small drops. The contact line has to
+  hold weight and wind together, `r × (1 + tilt²)^¼ > release`, so heavy drops
+  let go in a gust.
+- **Running.** Running drops lean off the vertical by `atan(tilt)`, capped so
+  they always move somewhat downhill, and run a little faster.
+- **Leaning.** Resting drops are drawn shifted slightly downwind, so they
+  tremble as gusts come and go.
+
+### Where the water goes
+
+Water is counted by volume. Drops on glass keep roughly the same contact angle
+whatever their size, so a drop's volume goes as r³, and merging drops add
+their volumes. Nothing on the glass creates or destroys water: only rain, mist
+and drops running in from above add it.
+
+- A trail bead takes its volume out of the drop that leaves it.
+- A rivulet is a low ridge of water about a third as high as it is wide, and
+  each node holds exactly the volume the drop lost laying it.
+- Draining moves water down the rivulet, never out of it. A snapped neck hands
+  its water to the piece it is still joined to.
+- Every piece ends as a droplet holding exactly its water, or as a fine speck
+  in the mist if it is too small to be a drop.
+- A drop that crosses an old rivulet soaks it up.
+
+Water leaves the glass only when drops run off the screen, the wiper pushes it
+off, mist slowly dries (about a minute), or resting drops evaporate (minutes).
+The test hook `WaterOnGlass()` sums drops and rivulets. Adding up what ran off,
+dried and went to mist balances the starting total exactly.
 
 ### The wiper
 
@@ -239,8 +299,11 @@ For each screen pixel the two textures are added, then:
    that grows with drop size and surface steepness.
 5. **Shading.** The lower half is lit slightly by light gathering from above. The
    rim darkens where light reflects inside the drop, most strongly along the
-   top edge. Larger drops get a small highlight from a light above-left; mist
-   gets none, because on tiny droplets it reads as noise.
+   top edge. Daylight from the sky above the window is flipped by the lens onto
+   the bottom edge, which gives a bright crescent. It shows most over dark
+   content and barely at all over bright content. Larger drops get a small
+   highlight from a light above-left; mist gets none, because on tiny droplets
+   it reads as noise.
 6. Output is premultiplied colour and alpha.
 
 ### Wiper (`PSWiper`)

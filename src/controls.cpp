@@ -53,6 +53,12 @@ struct SliderDef {
 };
 
 void FormatTimes(float v, wchar_t* out, size_t n) { swprintf_s(out, n, L"%.1fx", v); }
+void FormatWind(float v, wchar_t* out, size_t n) {
+    if (std::fabs(v) < 0.05f)
+        swprintf_s(out, n, L"calm");
+    else
+        swprintf_s(out, n, v < 0 ? L"\u2190 %.1f" : L"%.1f \u2192", std::fabs(v));
+}
 // Radius in pixels at 1440p on a 27" panel (about 0.233 mm per pixel) to a diameter in mm.
 void FormatMm(float v, wchar_t* out, size_t n) { swprintf_s(out, n, L"%.1f mm", v * 2.0f * 0.233f); }
 
@@ -64,6 +70,8 @@ const SliderDef kSliders[] = {
     {L"Smallest raindrop", &Settings::minDrop, 1.0f, 10.0f, false, FormatMm},
     {L"Largest raindrop", &Settings::maxDrop, 3.0f, 25.0f, false, FormatMm},
     {L"Streak life", &Settings::streakLife, 0.3f, 4.0f, true, FormatTimes},
+    {L"Wind", &Settings::wind, -3.0f, 3.0f, false, FormatWind},
+    {L"Gustiness", &Settings::gusts, 0.0f, 2.0f, false, FormatTimes},
 };
 constexpr int kSliderCount = static_cast<int>(sizeof(kSliders) / sizeof(kSliders[0]));
 constexpr int kSliderSteps = 200;
@@ -176,6 +184,8 @@ void Load() {
     s.minDrop = ReadFloat(L"minDrop", def.minDrop);
     s.maxDrop = ReadFloat(L"maxDrop", def.maxDrop);
     s.streakLife = ReadFloat(L"streakLife", def.streakLife);
+    s.wind = ReadFloat(L"wind", def.wind);
+    s.gusts = ReadFloat(L"gusts", def.gusts);
     s.autoWipeMinutes = static_cast<int>(ReadFloat(L"autoWipeMinutes", 0));
     s.paused = ReadFloat(L"paused", 0) != 0;
     for (const SliderDef& d : kSliders) s.*d.field = std::clamp(s.*d.field, d.lo, d.hi);
@@ -487,6 +497,8 @@ void Save() {
     WriteFloat(L"minDrop", s.minDrop);
     WriteFloat(L"maxDrop", s.maxDrop);
     WriteFloat(L"streakLife", s.streakLife);
+    WriteFloat(L"wind", s.wind);
+    WriteFloat(L"gusts", s.gusts);
     WriteFloat(L"autoWipeMinutes", static_cast<float>(s.autoWipeMinutes));
     WriteFloat(L"paused", s.paused ? 1.0f : 0.0f);
 }

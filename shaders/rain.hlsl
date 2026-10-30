@@ -220,6 +220,13 @@ float4 PSComposite(VSOut input) : SV_Target
     float sizeK = lerp(0.45, 1.0, smoothstep(1.0, 5.0, radius / scale));
     col *= 1 - rim * (0.1 + 0.7 * top * top) * sizeK;
 
+    // Daylight from the sky above the window is refracted to the bottom edge
+    // of every drop (the lens flips it), giving the bright crescent that
+    // makes rain visible even against something dark. It barely shows over
+    // bright content, which is already that bright.
+    float crescent = saturate(n.y * 1.6) * smoothstep(0.1, 0.8, steep) * lens;
+    col += 0.3 * crescent * (1 - 0.7 * dot(col, float3(0.3, 0.59, 0.11)));
+
     // Small reflection of a light above and to the left. Mist is too small
     // to show a crisp highlight; it would read as noise.
     float3 L = normalize(float3(-0.35, -0.75, 0.55));

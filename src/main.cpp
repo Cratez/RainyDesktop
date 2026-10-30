@@ -751,6 +751,8 @@ void RenderLoop() {
         g.sim.minDrop = s.minDrop;
         g.sim.maxDrop = s.maxDrop;
         g.sim.streakLife = s.streakLife;
+        g.sim.wind = s.wind;
+        g.sim.gusts = s.gusts;
         if (s.autoWipeMinutes > 0 && now - lastWipe > std::chrono::minutes(s.autoWipeMinutes)) {
             g.sim.StartWipe();
         }

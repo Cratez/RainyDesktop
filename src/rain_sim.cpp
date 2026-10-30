@@ -30,6 +30,11 @@ constexpr float kMistMaxRadius = 1.6f;  // anything smaller lives in the mist te
 constexpr float kDryTime = 120.0f;     // seconds for a wet path to mostly dry
 constexpr float kMaxRadius = 2.2f;     // running drops never grow past this many pin radii
 
+// Water is counted by volume. Drops on glass keep roughly the same contact
+// angle whatever their size, so a drop's volume goes as the cube of its radius.
+float Volume(float r) { return r * r * r; }
+float RadiusFor(float volume) { return std::cbrt(std::max(volume, 0.0f)); }
+
 Splat MakeSplat(float x, float y, float rx, float ry, float height) {
     Splat s{};
     s.x = x;
@@ -146,12 +151,12 @@ void RainSim::ForNeighbors(float x, float y, float radius, F&& f) {
             for (int j = gridHead_[static_cast<size_t>(cy) * gridW_ + cx]; j >= 0; j = gridNext_[j]) f(j);
 }
 
-// Water volume is roughly proportional to footprint area for drops this flat.
-// Speed follows momentum, so a running drop slows when it swallows a still one.
+// Volumes add. Speed follows momentum, so a running drop slows when it
+// swallows a still one.
 void RainSim::Merge(Drop& into, Drop& from) {
-    float a = into.r * into.r, b = from.r * from.r;
+    float a = Volume(into.r), b = Volume(from.r);
     float speed = (into.vy * a + from.vy * b) / (a + b);
-    float r = std::min(std::sqrt(a + b), kMaxRadius * kPinRadius * s_ * std::max(friction, 1.0f));
+    float r = std::min(RadiusFor(a + b), kMaxRadius * kPinRadius * s_ * std::max(friction, 1.0f));
     from.dead = true;
     into.vy = speed;
     if (into.running) {
@@ -246,7 +251,78 @@ void RainSim::Spawn(float x, float y, float r) {
 
 // A raindrop hitting glass leaves one main drop and sometimes a spray of
 // small satellites around it.
+// ---------------------------------------------------------------- wind
+
+// The wind blowing along the glass, with gusts: two smoothed random signals,
+// a slow one that swells and lulls over several seconds and a quick one that
+// buffets, scaled around the steady setting.
+void RainSim::UpdateWind(float dt) {
+    std::normal_distribution<float> normal(0.0f, 1.0f);
+    auto drift = [&](float& v, float tau) { v += -v * dt / tau + std::sqrt(2.0f * dt / tau) * normal(rng_); };
+    drift(gustSlow_, 5.0f);
+    drift(gustFast_, 0.7f);
+    float g = gusts * (0.55f * gustSlow_ + 0.3f * gustFast_);
+    windNow_ = wind * std::max(1.0f + g, 0.1f);
+}
+
+// Gust fronts sweep across the pane, so the wind is never quite the same
+// everywhere at once.
+float RainSim::WindAt(float x, float y) const {
+    float sweep = std::sin(x * 0.003f / s_ - time_ * 1.7f * (wind >= 0 ? 1.0f : -1.0f) + y * 0.001f / s_);
+    return windNow_ * (1.0f + 0.25f * gusts * sweep);
+}
+
+// Wind drag on a drop grows with its frontal area (r^2), its weight with its
+// volume (r^3), so the wind leans on small drops relatively harder.
+float RainSim::Tilt(const Drop& d) const {
+    float pinR = kPinRadius * s_ * friction;
+    return std::clamp(0.5f * WindAt(d.x, d.y) * pinR / std::max(d.r, 0.3f * pinR), -3.0f, 3.0f);
+}
+
+// ---------------------------------------------------------------- impacts
+
 void RainSim::Impact(float x, float y, float r) {
+    // Some rain meets the glass head on and just appears. The rest arrives
+    // at a glancing angle, with the wind's push along the pane and part of
+    // its fall: it skids a few millimetres, smears into a streak, and throws
+    // its splash forward. The stronger the wind, the more of these.
+    float w = WindAt(x, y);
+    if (Rand() < 0.12f + 0.6f * std::clamp(std::fabs(w) / 1.5f, 0.0f, 1.0f)) {
+        float dx = w * Rand(0.6f, 1.2f) + Rand(-0.3f, 0.3f), dy = Rand(0.2f, 1.0f);
+        float len = std::sqrt(dx * dx + dy * dy);
+        dx /= len;
+        dy /= len;
+        float skid = r * Rand(1.0f, 2.6f) * std::clamp(0.6f + 0.4f * len, 0.6f, 1.4f);
+        float hx = x + dx * skid, hy = y + dy * skid;
+        // A few fine droplets are left along the skid; their water comes out of the drop.
+        float left = Volume(r);
+        for (int k = 0, n = 1 + static_cast<int>(Rand() * 3); k < n; ++k) {
+            float t = Rand(0.1f, 0.8f), br = r * Rand(0.08f, 0.16f);
+            AddMist(x + dx * skid * t, y + dy * skid * t, br);
+            left -= Volume(br);
+        }
+        float rr = RadiusFor(std::max(left, Volume(r) * 0.5f));
+        size_t before = live_.size();
+        Spawn(hx, hy, rr);
+        if (live_.size() > before) {
+            // Smeared back along the skid: a head and a thinning tail. The
+            // pinned contact line holds the streak shape for a long time.
+            Drop& d = live_.back();
+            d.lobes[0] = {0, 0, rr * 0.8f};
+            d.lobes[1] = {-dx * skid * 0.45f, -dy * skid * 0.45f, rr * 0.5f};
+            d.lobes[2] = {-dx * skid * 0.85f, -dy * skid * 0.85f, rr * 0.33f};
+            d.lobeCount = 3;
+        }
+        if (Rand() < 0.5f) {
+            float ang = std::atan2(dx, dy);
+            for (int k = 0, n = 2 + static_cast<int>(Rand() * 4); k < n; ++k) {
+                float a = ang + Rand(-0.6f, 0.6f), dist = rr * Rand(1.6f, 5.0f);
+                Spawn(hx + std::sin(a) * dist, hy + std::cos(a) * dist, rr * Rand(0.1f, 0.28f));
+            }
+        }
+        return;
+    }
+
     Spawn(x, y, r);
     if (Rand() < 0.35f) {
         int n = 2 + static_cast<int>(Rand() * 4);
@@ -277,6 +353,7 @@ void RainSim::Steer(Drop& d) {
 
 void RainSim::Update(float dt) {
     time_ += dt;
+    UpdateWind(dt);
     mist_.clear();
     erase_.clear();
     BuildGrid();
@@ -285,8 +362,9 @@ void RainSim::Update(float dt) {
     const float pinR = kPinRadius * s * friction;
     const float baseSpeed = kBaseSpeed * s * runSpeed;
 
-    // New rain. Mostly small drops, the odd big splat.
-    dropAccum_ += dt * 10.0f * intensity;
+    // New rain. Mostly small drops, the odd big splat. Gusts bring bursts.
+    float burst = std::fabs(wind) > 0.05f ? std::clamp(1.0f + 0.5f * gusts * gustSlow_, 0.4f, 2.5f) : 1.0f;
+    dropAccum_ += dt * 10.0f * intensity * burst;
     while (dropAccum_ >= 1.0f) {
         dropAccum_ -= 1.0f;
         float lo = std::min(minDrop, maxDrop), hi = std::max(minDrop, maxDrop);
@@ -298,6 +376,22 @@ void RainSim::Update(float dt) {
     while (mistAccum_ >= 1.0f) {
         mistAccum_ -= 1.0f;
         AddMist(Rand(0, w_), Rand(0, h_), s * Rand(0.8f, 3.0f));
+    }
+    // The pane goes on above the screen: now and then a drop gathered up
+    // there runs down into view.
+    runnerAccum_ += dt * 0.12f * intensity * (w_ / (2560.0f * s));
+    while (runnerAccum_ >= 1.0f && live_.size() < kMaxDrops) {
+        runnerAccum_ -= 1.0f;
+        Drop d{Rand(0, w_), 0, pinR * Rand(0.95f, 1.5f)};
+        d.y = -d.r * 2.0f;
+        d.pin = 1.0f;
+        d.running = true;
+        d.release = pinR * Rand(0.85f, 1.1f);
+        d.vy = baseSpeed;
+        d.trailDist = d.r;
+        d.streaky = Rand() < 0.6f;
+        ResetShape(d, false);
+        live_.push_back(d);
     }
 
     struct Pending {
@@ -314,6 +408,12 @@ void RainSim::Update(float dt) {
             // Resting drops slowly gather the mist around them.
             float aff = Affinity(d.x, d.y);
             float grown = d.r + growth * (0.5f + aff);
+            // ...and slowly evaporate, which wins once the rain stops.
+            grown = std::sqrt(std::max(grown * grown - dt * 0.015f * s * s, 0.0f));
+            if (grown < kMistMaxRadius * s * 0.7f) {
+                d.dead = true;
+                continue;
+            }
             // Pinned contact lines only slowly let a lumpy drop pull itself round.
             float relax = std::exp(-dt / (60.0f * d.pin));
             for (int k = 0; k < d.lobeCount; ++k) {
@@ -344,14 +444,18 @@ void RainSim::Update(float dt) {
             if (d.dead) continue;
 
             float release = pinR * d.pin * (0.85f + 0.3f * aff) * (1.0f - 0.3f * Wetness(d.x, d.y));
-            if (d.r > release) {
+            // Wind adds a sideways pull to the weight the contact line must
+            // hold, so heavy drops let go in a gust.
+            float tilt = Tilt(d);
+            if (d.r * std::pow(1.0f + tilt * tilt, 0.25f) > release) {
                 d.running = true;
                 d.release = release;
                 d.vy = 0;
-                d.heading = d.targetHeading = Rand(-0.15f, 0.15f);
+                d.heading = d.targetHeading = Rand(-0.15f, 0.15f) + std::clamp(std::atan(tilt), -1.2f, 1.2f) * 0.7f;
                 d.steerDist = 0;
                 d.trailDist = d.r * Rand(0.5f, 1.5f);
-                d.streaky = Rand() < 0.55f;
+                // Only a drop with enough water to spare draws out a rivulet.
+                d.streaky = d.r > 0.8f * pinR && Rand() < 0.6f;
                 ResetShape(d, false);
             }
             continue;
@@ -366,13 +470,18 @@ void RainSim::Update(float dt) {
         }
         // Fast drops have too much momentum to wander much.
         float wander = 1.0f / (1.0f + d.vy / (400.0f * s));
-        d.heading += (d.targetHeading * wander - d.heading) * std::min(1.0f, dt * 5.0f);
+        // The wind leans running drops off the vertical.
+        float tilt = Tilt(d);
+        float push = std::sqrt(1.0f + tilt * tilt);
+        float lean = std::clamp(std::atan(tilt), -1.2f, 1.2f);
+        d.heading += (d.targetHeading * wander + lean - d.heading) * std::min(1.0f, dt * 5.0f);
+        d.heading = std::clamp(d.heading, -1.35f, 1.35f);  // always somewhat downhill
 
         // Speed rises steeply with size: a drop that only just broke loose
         // creeps, one that swallowed its neighbours is gone in a blink. A wet
         // path has almost no grip left, so drops run faster along it.
         float slideR = d.release * 0.8f;
-        float drive = std::max((d.r * d.r) / (slideR * slideR) - 1.0f, 0.05f);
+        float drive = std::max((d.r * d.r) / (slideR * slideR) * push - 1.0f, 0.05f);
         float target = std::min(baseSpeed * drive * (1.0f + 0.8f * wetAhead), kMaxSpeed * s * runSpeed);
         if (d.stickTimer > 0) {
             d.stickTimer -= dt;
@@ -411,11 +520,13 @@ void RainSim::Update(float dt) {
             float back = d.r * (1.75f + 1.8f * k) + tr;
             beads.push_back({d.x - std::sin(d.heading) * back + Rand(-0.25f, 0.25f) * d.r,
                              d.y - std::cos(d.heading) * back, tr});
-            d.r = std::sqrt(std::max(d.r * d.r - tr * tr * 0.7f, 0.0f));
+            tr = std::min(tr, d.r * 0.5f);
+            d.r = RadiusFor(Volume(d.r) - Volume(tr));  // the bead's water comes out of the drop
         }
 
         // Swallow whatever is in the way, including old rivulets it crosses.
-        EraseRivulets(d.x, d.y, d.r * 0.9f, d.rivulet);
+        if (float soaked = EraseRivulets(d.x, d.y, d.r * 0.9f, d.rivulet))
+            d.r = std::min(RadiusFor(Volume(d.r) + soaked), kMaxRadius * kPinRadius * s_ * std::max(friction, 1.0f));
         ForNeighbors(d.x, d.y, d.r * 2.0f + 20.0f * s, [&](int j) {
             if (j == i) return;
             Drop& o = live_[j];
@@ -431,7 +542,7 @@ void RainSim::Update(float dt) {
         // Pins again once it has shed enough, unless it is riding a wet path.
         // Receding grip is weaker than advancing grip, so a drop keeps going
         // until it has shed down to about 80% of the size it let go at.
-        if (d.r < slideR && wetAhead < 0.3f) {
+        if (d.r * std::sqrt(push) < slideR && wetAhead < 0.3f) {
             d.running = false;
             d.vy = 0;
             d.eraseTimer = 0;
@@ -455,10 +566,14 @@ void RainSim::Update(float dt) {
         if (!d.running) {
             // Heavy drops sag: gravity pulls them longer and narrower as they near release.
             float sag = 1.0f + 0.3f * std::clamp(d.r / (kPinRadius * s_ * friction) - 0.4f, 0.0f, 1.0f);
+            // Wind leans the drop over a little downwind, and it trembles as
+            // the gusts buffet it.
+            float lean = std::clamp(Tilt(d), -1.5f, 1.5f) * 0.12f * d.r;
             for (int k = 0; k < d.lobeCount; ++k) {
                 const Drop::Lobe& l = d.lobes[k];
-                drops_.push_back(MakeSplat(d.x + l.dx, d.y + l.dy * sag, l.r * kSpriteScale / std::sqrt(sag),
-                                           l.r * kSpriteScale * sag, l.r * kHeightPerRadius));
+                drops_.push_back(MakeSplat(d.x + l.dx + lean * (l.r / d.r), d.y + l.dy * sag,
+                                           l.r * kSpriteScale / std::sqrt(sag), l.r * kSpriteScale * sag,
+                                           l.r * kHeightPerRadius));
             }
             continue;
         }
@@ -480,6 +595,18 @@ void RainSim::Update(float dt) {
     }
 }
 
+float RainSim::WaterOnGlass() const {
+    float total = 0;
+    for (const Drop& d : live_)
+        if (!d.dead) total += Volume(d.r);
+    for (const Rivulet& rv : rivulets_) {
+        total += rv.carry;
+        for (const RivuletNode& n : rv.nodes)
+            if (n.alive) total += n.water;
+    }
+    return total;
+}
+
 // ---------------------------------------------------------------- rivulets
 
 // A drop running fast over dry glass drags a thin rivulet out of its tail.
@@ -499,11 +626,21 @@ void RainSim::LayRivulet(Drop& d, float step) {
     float k = std::clamp(d.vy / (600.0f * s_), 0.0f, 1.0f);
     float back = d.r * (1.0f + 1.2f * k);
     float tx = d.x - std::sin(d.heading) * back, ty = d.y - std::cos(d.heading) * back;
-    float w0 = d.r * 0.26f;
+    float w0 = std::max(d.r * 0.2f, 1.6f * s_);  // never thinner than a hairline
     float spacing = std::max(w0 * 0.5f, 0.8f * s_);
+
+    // Water moves from the drop into the rivulet: the drop loses exactly the
+    // volume the new nodes hold.
+    // A rivulet is a low ridge of water about a third as high as it is
+    // wide: a cross-section of about 0.4 w^2, which in drop-volume terms
+    // (a cap holds about 0.63 r^3) is about 0.6 w^2 per pixel of length.
+    float lost = std::min(0.6f * w0 * w0 * step, Volume(d.r) * 0.5f);
+    d.r = RadiusFor(Volume(d.r) - lost);
+    rv.carry += lost;
 
     auto add = [&](float x, float y, float along) {
         RivuletNode n;
+        n.water = 0;
         // Width wanders a little, and the line meanders slightly sideways
         // as the contact line catches on the glass.
         n.w0 = w0 * (1.0f + 0.18f * std::sin(along * 0.11f / s_ + rv.phase * 3.0f));
@@ -529,16 +666,21 @@ void RainSim::LayRivulet(Drop& d, float step) {
         float dist = std::sqrt(dx * dx + dy * dy);
         int n = static_cast<int>(dist / spacing);
         float along = last.along;
+        size_t first = rv.nodes.size();
         for (int i = 1; i <= n; ++i) {
             float t = i * spacing / dist;
             add(lx + dx * t, ly + dy * t, along + i * spacing);
         }
+        if (n > 0) {
+            for (size_t i = first; i < rv.nodes.size(); ++i) rv.nodes[i].water = rv.nodes[i].water0 = rv.carry / n;
+            rv.carry = 0;
+        }
     }
-    d.r = std::sqrt(std::max(d.r * d.r - w0 * step * 0.05f, 0.0f));
 }
 
 // Old drops and the wiper soak up any rivulet they pass over.
-void RainSim::EraseRivulets(float x, float y, float radius, int skip) {
+float RainSim::EraseRivulets(float x, float y, float radius, int skip) {
+    float soaked = 0;
     for (int i = 0; i < static_cast<int>(rivulets_.size()); ++i) {
         Rivulet& rv = rivulets_[i];
         if (i == skip || x + radius < rv.minX || x - radius > rv.maxX || y + radius < rv.minY ||
@@ -546,16 +688,48 @@ void RainSim::EraseRivulets(float x, float y, float radius, int skip) {
             continue;
         for (RivuletNode& n : rv.nodes) {
             float dx = n.x - x, dy = n.y - y;
-            if (dx * dx + dy * dy < radius * radius) n.alive = false;
+            if (n.alive && dx * dx + dy * dy < radius * radius) {
+                n.alive = false;
+                soaked += n.water;
+            }
         }
+    }
+    return soaked;
+}
+
+// Turns nodes [a, b) into one droplet holding exactly their water. It
+// gathers into an oval along the line first, then rounds out slowly like any
+// other resting drop.
+void RainSim::BeadUp(Rivulet& rv, int a, int b) {
+    float water = 0, cx = 0, cy = 0;
+    for (int m = a; m < b; ++m) {
+        RivuletNode& n = rv.nodes[m];
+        water += n.water;
+        cx += n.x * n.water;
+        cy += n.y * n.water;
+        n.alive = false;
+        n.water = 0;
+    }
+    if (water <= 0 || b <= a) return;
+    size_t before = live_.size();
+    Spawn(cx / water, cy / water, RadiusFor(water));
+    if (live_.size() > before) {
+        Drop& d = live_.back();
+        float ex = rv.nodes[b - 1].x - rv.nodes[a].x, ey = rv.nodes[b - 1].y - rv.nodes[a].y;
+        float len = std::max(std::sqrt(ex * ex + ey * ey), 1e-3f);
+        float lr = RadiusFor(water * 0.5f), off = std::min(len * 0.25f, lr * 0.6f);
+        d.lobes[0] = {-ex / len * off, -ey / len * off, lr};
+        d.lobes[1] = {ex / len * off, ey / len * off, lr};
+        d.lobeCount = 2;
     }
 }
 
-// A rivulet left on the glass is unstable. It drains from its oldest end
-// (the top) first. Further down, surface tension pinches it into segments
-// about ten widths long (Plateau-Rayleigh), the necks thin until they snap,
-// and each segment pulls itself up into a round droplet. What is left is a
-// line of small drops along the path.
+// A rivulet left on the glass is unstable. Its water drains down the line,
+// so the oldest part (the top) thins first and the water gathers lower down.
+// Surface tension pinches it into segments about twenty widths long
+// (Plateau-Rayleigh), the necks thin until they snap, and each segment pulls
+// itself up into a droplet. Every drop of water ends up in those droplets:
+// none of it is lost on the way.
 void RainSim::UpdateRivulets(float dt) {
     const float life = std::max(streakLife, 0.1f);
     auto smooth = [](float a, float b, float x) {
@@ -573,45 +747,72 @@ void RainSim::UpdateRivulets(float dt) {
     }
 
     for (Rivulet& rv : rivulets_) {
-        for (RivuletNode& n : rv.nodes) {
+        std::vector<RivuletNode>& nodes = rv.nodes;
+        const int count = static_cast<int>(nodes.size());
+
+        // Drain: older water flows down into the next node. Bottom up, so
+        // water moves at most one node per frame.
+        for (int m = count - 2; m >= 0; --m) {
+            RivuletNode& a = nodes[m];
+            RivuletNode& b = nodes[m + 1];
+            if (!a.alive || !b.alive || time_ - a.born < 2.5f * life) continue;
+            float flow = a.water * std::min(1.0f, dt / (2.0f * life));
+            a.water -= flow;
+            b.water += flow;
+        }
+
+        // Shape: the pinching wave, scaled by how much water is left here.
+        // A neck that gets too thin snaps and hands its water to whichever
+        // neighbour it is still joined to, downhill first.
+        for (int m = 0; m < count; ++m) {
+            RivuletNode& n = nodes[m];
             if (!n.alive) continue;
             float age = time_ - n.born;
             float pinch = smooth(1.0f * life, 4.0f * life, age);
             float lambda = rv.wavelength * n.w0 * 2.0f;
             float wave = std::sin(6.2832f * n.along / lambda + rv.phase) +
                          0.3f * std::sin(6.2832f * n.along / (lambda * 0.43f) + rv.phase * 2.0f);
-            float drain = std::exp(-std::max(age - 3.5f * life, 0.0f) / (3.0f * life));
-            n.w = n.w0 * std::max(1.0f + 0.8f * pinch * wave, 0.0f) * drain;
-            if (n.w < 0.35f * n.w0 || drain < 0.3f) n.alive = false;
+            float full = std::sqrt(std::max(n.water, 0.0f) / std::max(n.water0, 1e-6f));
+            n.w = n.w0 * std::max(1.0f + 0.8f * pinch * wave, 0.0f) * std::clamp(full, 0.3f, 1.8f);
+            if (n.w >= 0.35f * n.w0 && full > 0.25f) continue;
+            n.alive = false;
+            if (m + 1 < count && nodes[m + 1].alive)
+                nodes[m + 1].water += n.water;
+            else if (m > 0 && nodes[m - 1].alive)
+                nodes[m - 1].water += n.water;
+            else if (n.water > 0)
+                AddMist(n.x, n.y, RadiusFor(n.water));  // a lone speck of water
+            n.water = 0;
         }
 
-        // Segments that have pinched off pull up into droplets, each at its
-        // own moment.
-        const int count = static_cast<int>(rv.nodes.size());
+        // Pieces pull up into droplets, each at its own moment: a pinched-off
+        // segment once it has had time to bead, and anything still joined up
+        // once the rivulet is old, one droplet per wavelength of its length.
         for (int i = 0; i < count;) {
-            if (!rv.nodes[i].alive) {
+            if (!nodes[i].alive) {
                 ++i;
                 continue;
             }
             int j = i;
             float youngest = -1e9f;
-            while (j < count && rv.nodes[j].alive) youngest = std::max(youngest, rv.nodes[j++].born);
+            while (j < count && nodes[j].alive) youngest = std::max(youngest, nodes[j++].born);
+            float age = time_ - youngest;
             bool pinchedOff = i > 0 && j < count;
-            float span = rv.nodes[j - 1].along - rv.nodes[i].along;
-            float lambda = rv.wavelength * rv.nodes[i].w0 * 2.0f;
-            if (pinchedOff && time_ - youngest > 3.0f * life && span < 2.0f * lambda &&
-                Rand() < dt * 2.5f / life) {
-                float area = 0, cx = 0, cy = 0;
-                for (int m = i; m < j; ++m) {
-                    RivuletNode& n = rv.nodes[m];
-                    float step = m + 1 < count ? rv.nodes[m + 1].along - n.along : 1.0f;
-                    float a = 2.0f * n.w * step;
-                    area += a;
-                    cx += n.x * a;
-                    cy += n.y * a;
-                    n.alive = false;
+            float span = nodes[j - 1].along - nodes[i].along;
+            float lambda = rv.wavelength * nodes[i].w0 * 2.0f;
+            bool bead = pinchedOff && age > 3.0f * life && span < 2.0f * lambda;
+            bool old = age > 7.0f * life && (j < count || !rv.open);
+            if ((bead || old) && Rand() < dt * 2.5f / life) {
+                // One droplet per wavelength, but never so many that each is a mere speck.
+                float water = 0;
+                for (int m = i; m < j; ++m) water += nodes[m].water;
+                float speck = kMistMaxRadius * s_;
+                int pieces = std::max(1, std::min(static_cast<int>(std::lround(span / lambda)),
+                                                  static_cast<int>(water / (Volume(speck) * 2.0f))));
+                for (int p = 0; p < pieces; ++p) {
+                    int a = i + (j - i) * p / pieces, b = i + (j - i) * (p + 1) / pieces;
+                    BeadUp(rv, a, b);
                 }
-                if (area > 0) Spawn(cx / area, cy / area, 0.8f * std::sqrt(area / 3.1416f));
             }
             i = j;
         }
