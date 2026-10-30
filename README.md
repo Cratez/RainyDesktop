@@ -1036,3 +1036,8 @@ A gentle `tanh` limiter on the output keeps a close clap from clipping.
 | `shaders/rain.hlsl` | All GPU shaders: drop splats, mist, composite, flash, streaks, wiper (built into the exe) |
 | `CMakeLists.txt`, `build.bat` | Build |
 | `sign.bat` | Signs the exe after each build; `sign.bat /check` checks it |
+| `LICENSE` | MIT license |
+
+## License
+
+MIT. See [LICENSE](LICENSE).
