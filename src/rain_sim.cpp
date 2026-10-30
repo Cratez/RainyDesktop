@@ -58,6 +58,7 @@ void RainSim::Clear() {
     drops_.clear();
     mist_.clear();
     erase_.clear();
+    rivulets_.clear();
     std::fill(wetTime_.begin(), wetTime_.end(), -1e9f);
     dropAccum_ = mistAccum_ = 0;
 }
@@ -390,21 +391,12 @@ void RainSim::Update(float dt) {
         d.steerDist -= step;
         Wet(d.x, d.y, d.r * 0.8f);
 
-        // Some runs drag a thin film behind them on dry glass. It costs the
-        // drop water as it goes and slowly dries off the glass afterwards.
-        if (d.streaky && wetHere < 0.5f && step > 0) {
-            float width = d.r * 0.3f;
-            float k = std::clamp(d.vy / (600.0f * s), 0.0f, 1.0f);
-            float back = d.r * (1.0f + 1.2f * k);
-            float bx = d.x - std::sin(d.heading) * back, by = d.y - std::cos(d.heading) * back;
-            int pieces = std::max(1, static_cast<int>(std::ceil(step / (width * 0.6f))));
-            for (int p = 0; p < pieces; ++p) {
-                float t = static_cast<float>(p) / pieces;
-                mist_.push_back(MakeSplat(bx - std::sin(d.heading) * step * t, by - std::cos(d.heading) * step * t,
-                                          width * kSpriteScale, width * kSpriteScale * 1.3f, width * 0.35f));
-            }
-            d.r = std::sqrt(std::max(d.r * d.r - width * step * 0.04f, 0.0f));
-        }
+        // Some runs drag a thin rivulet behind them on dry glass. On a wet
+        // path the drop rides earlier water instead and leaves none.
+        if (d.streaky && wetHere < 0.5f && step > 0)
+            LayRivulet(d, step);
+        else
+            d.rivulet = -1;
 
         // On dry glass the trailing film breaks into beads. On a wet path the
         // drop mostly picks earlier beads back up, so it sheds less.
@@ -422,7 +414,8 @@ void RainSim::Update(float dt) {
             d.r = std::sqrt(std::max(d.r * d.r - tr * tr * 0.7f, 0.0f));
         }
 
-        // Swallow whatever is in the way.
+        // Swallow whatever is in the way, including old rivulets it crosses.
+        EraseRivulets(d.x, d.y, d.r * 0.9f, d.rivulet);
         ForNeighbors(d.x, d.y, d.r * 2.0f + 20.0f * s, [&](int j) {
             if (j == i) return;
             Drop& o = live_[j];
@@ -450,10 +443,14 @@ void RainSim::Update(float dt) {
     // Spawn before compacting: Spawn looks up neighbours through this frame's grid indices.
     for (const Pending& p : beads) Spawn(p.x, p.y, p.r);
     UpdateWiper(dt);
+    UpdateRivulets(dt);
     live_.erase(std::remove_if(live_.begin(), live_.end(), [](const Drop& d) { return d.dead; }), live_.end());
 
     drops_.clear();
     drops_.reserve(live_.size() * 3);
+    for (const Rivulet& rv : rivulets_)
+        for (const RivuletNode& n : rv.nodes)
+            if (n.alive) drops_.push_back(MakeSplat(n.x, n.y, n.w * 1.1f, n.w * 1.1f, n.w * kHeightPerRadius));
     for (const Drop& d : live_) {
         if (!d.running) {
             // Heavy drops sag: gravity pulls them longer and narrower as they near release.
@@ -481,6 +478,161 @@ void RainSim::Update(float dt) {
                                        d.r * 0.85f * kSpriteScale, height * 0.4f));
         }
     }
+}
+
+// ---------------------------------------------------------------- rivulets
+
+// A drop running fast over dry glass drags a thin rivulet out of its tail.
+// The rivulet costs the drop water as it goes.
+void RainSim::LayRivulet(Drop& d, float step) {
+    if (d.rivulet < 0) {
+        Rivulet rv;
+        rv.wavelength = Rand(8.0f, 13.0f);
+        rv.phase = Rand(0, 6.2832f);
+        rv.wobble = Rand(0, 6.2832f);
+        rv.minX = rv.maxX = d.x;
+        rv.minY = rv.maxY = d.y;
+        rivulets_.push_back(std::move(rv));
+        d.rivulet = static_cast<int>(rivulets_.size()) - 1;
+    }
+    Rivulet& rv = rivulets_[d.rivulet];
+    float k = std::clamp(d.vy / (600.0f * s_), 0.0f, 1.0f);
+    float back = d.r * (1.0f + 1.2f * k);
+    float tx = d.x - std::sin(d.heading) * back, ty = d.y - std::cos(d.heading) * back;
+    float w0 = d.r * 0.26f;
+    float spacing = std::max(w0 * 0.5f, 0.8f * s_);
+
+    auto add = [&](float x, float y, float along) {
+        RivuletNode n;
+        // Width wanders a little, and the line meanders slightly sideways
+        // as the contact line catches on the glass.
+        n.w0 = w0 * (1.0f + 0.18f * std::sin(along * 0.11f / s_ + rv.phase * 3.0f));
+        n.x = x + std::sin(along * 0.045f / s_ + rv.wobble) * w0 * 0.7f;
+        n.y = y;
+        n.born = time_;
+        n.along = along;
+        n.w = n.w0;
+        rv.nodes.push_back(n);
+        rv.minX = std::min(rv.minX, n.x - w0 * 3);
+        rv.maxX = std::max(rv.maxX, n.x + w0 * 3);
+        rv.minY = std::min(rv.minY, n.y - w0 * 3);
+        rv.maxY = std::max(rv.maxY, n.y + w0 * 3);
+    };
+    if (rv.nodes.empty()) {
+        add(tx, ty, 0);
+    } else {
+        // Fill in from the last node up to the tail, starting from the last
+        // node's unjittered position so the meander doesn't accumulate.
+        const RivuletNode& last = rv.nodes.back();
+        float lx = last.x - std::sin(last.along * 0.045f / s_ + rv.wobble) * w0 * 0.7f, ly = last.y;
+        float dx = tx - lx, dy = ty - ly;
+        float dist = std::sqrt(dx * dx + dy * dy);
+        int n = static_cast<int>(dist / spacing);
+        float along = last.along;
+        for (int i = 1; i <= n; ++i) {
+            float t = i * spacing / dist;
+            add(lx + dx * t, ly + dy * t, along + i * spacing);
+        }
+    }
+    d.r = std::sqrt(std::max(d.r * d.r - w0 * step * 0.05f, 0.0f));
+}
+
+// Old drops and the wiper soak up any rivulet they pass over.
+void RainSim::EraseRivulets(float x, float y, float radius, int skip) {
+    for (int i = 0; i < static_cast<int>(rivulets_.size()); ++i) {
+        Rivulet& rv = rivulets_[i];
+        if (i == skip || x + radius < rv.minX || x - radius > rv.maxX || y + radius < rv.minY ||
+            y - radius > rv.maxY)
+            continue;
+        for (RivuletNode& n : rv.nodes) {
+            float dx = n.x - x, dy = n.y - y;
+            if (dx * dx + dy * dy < radius * radius) n.alive = false;
+        }
+    }
+}
+
+// A rivulet left on the glass is unstable. It drains from its oldest end
+// (the top) first. Further down, surface tension pinches it into segments
+// about ten widths long (Plateau-Rayleigh), the necks thin until they snap,
+// and each segment pulls itself up into a round droplet. What is left is a
+// line of small drops along the path.
+void RainSim::UpdateRivulets(float dt) {
+    const float life = std::max(streakLife, 0.1f);
+    auto smooth = [](float a, float b, float x) {
+        float t = std::clamp((x - a) / (b - a), 0.0f, 1.0f);
+        return t * t * (3 - 2 * t);
+    };
+
+    for (Rivulet& rv : rivulets_) rv.open = false;
+    for (Drop& d : live_) {
+        if (d.rivulet < 0) continue;
+        if (d.dead || !d.running)
+            d.rivulet = -1;
+        else
+            rivulets_[d.rivulet].open = true;
+    }
+
+    for (Rivulet& rv : rivulets_) {
+        for (RivuletNode& n : rv.nodes) {
+            if (!n.alive) continue;
+            float age = time_ - n.born;
+            float pinch = smooth(1.0f * life, 4.0f * life, age);
+            float lambda = rv.wavelength * n.w0 * 2.0f;
+            float wave = std::sin(6.2832f * n.along / lambda + rv.phase) +
+                         0.3f * std::sin(6.2832f * n.along / (lambda * 0.43f) + rv.phase * 2.0f);
+            float drain = std::exp(-std::max(age - 3.5f * life, 0.0f) / (3.0f * life));
+            n.w = n.w0 * std::max(1.0f + 0.8f * pinch * wave, 0.0f) * drain;
+            if (n.w < 0.35f * n.w0 || drain < 0.3f) n.alive = false;
+        }
+
+        // Segments that have pinched off pull up into droplets, each at its
+        // own moment.
+        const int count = static_cast<int>(rv.nodes.size());
+        for (int i = 0; i < count;) {
+            if (!rv.nodes[i].alive) {
+                ++i;
+                continue;
+            }
+            int j = i;
+            float youngest = -1e9f;
+            while (j < count && rv.nodes[j].alive) youngest = std::max(youngest, rv.nodes[j++].born);
+            bool pinchedOff = i > 0 && j < count;
+            float span = rv.nodes[j - 1].along - rv.nodes[i].along;
+            float lambda = rv.wavelength * rv.nodes[i].w0 * 2.0f;
+            if (pinchedOff && time_ - youngest > 3.0f * life && span < 2.0f * lambda &&
+                Rand() < dt * 2.5f / life) {
+                float area = 0, cx = 0, cy = 0;
+                for (int m = i; m < j; ++m) {
+                    RivuletNode& n = rv.nodes[m];
+                    float step = m + 1 < count ? rv.nodes[m + 1].along - n.along : 1.0f;
+                    float a = 2.0f * n.w * step;
+                    area += a;
+                    cx += n.x * a;
+                    cy += n.y * a;
+                    n.alive = false;
+                }
+                if (area > 0) Spawn(cx / area, cy / area, 0.8f * std::sqrt(area / 3.1416f));
+            }
+            i = j;
+        }
+    }
+
+    // Drop rivulets that are gone, keeping drops pointed at the right ones.
+    std::vector<int> remap(rivulets_.size(), -1);
+    size_t kept = 0;
+    for (size_t i = 0; i < rivulets_.size(); ++i) {
+        Rivulet& rv = rivulets_[i];
+        bool any = rv.open || std::any_of(rv.nodes.begin(), rv.nodes.end(), [](const RivuletNode& n) {
+                       return n.alive;
+                   });
+        if (!any) continue;
+        remap[i] = static_cast<int>(kept);
+        if (kept != i) rivulets_[kept] = std::move(rv);
+        ++kept;
+    }
+    rivulets_.resize(kept);
+    for (Drop& d : live_)
+        if (d.rivulet >= 0) d.rivulet = remap[d.rivulet];
 }
 
 // ---------------------------------------------------------------- wiper
@@ -543,7 +695,7 @@ void RainSim::UpdateWiper(float dt) {
         if (d.y - d.r > h_ || d.x < -d.r || d.x > w_ + d.r) d.dead = true;
     }
 
-    // Wipe the mist and streak film from the swept wedge, and leave the
+    // Wipe the mist and rivulets from the swept wedge, and leave the
     // glass wet so the next drops run easily.
     float spacing = 14.0f * s_;
     for (float rad = wiper_.inner; rad <= wiper_.outer; rad += spacing) {
@@ -554,6 +706,7 @@ void RainSim::UpdateWiper(float dt) {
             place(a, rad, x, y);
             if (x < -spacing || x > w_ + spacing || y < -spacing || y > h_ + spacing) continue;
             erase_.push_back(MakeSplat(x, y, spacing * 1.2f, spacing * 1.2f, 1.0f));
+            EraseRivulets(x, y, spacing * 1.2f);
             Wet(x, y, spacing);
         }
     }

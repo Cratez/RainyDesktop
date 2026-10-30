@@ -47,6 +47,7 @@ overflow arrow).
 | Glass grip (friction) | How hard the glass holds on to drops. Higher means bigger drops build up before they run, and running drops stutter more. |
 | Running speed | Scales how fast running drops travel. |
 | Smallest / largest raindrop | Size range of raindrops when they land (diameters assume a 27" 1440p screen). |
+| Streak life | How long the thin trails behind running drops last before they break into droplets and drain away. |
 | Pause rain | Stops new rain. Water already on the glass keeps behaving. |
 
 Settings apply immediately and are saved in `raindesk.ini` next to the exe.

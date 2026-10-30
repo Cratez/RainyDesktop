@@ -15,7 +15,9 @@
 //     almost no hysteresis, so later drops follow the same meandering paths
 //     faster and more smoothly. On dry glass they stutter (stick-slip).
 //   - Running on dry glass costs water: the rear contact line breaks the
-//     trailing film into a line of small beads.
+//     trailing film into a line of small beads, or the drop drags a thin
+//     rivulet behind it. A rivulet drains from its old end, then pinches into
+//     segments (Plateau-Rayleigh) that pull up into a line of droplets.
 //   - Merging conserves momentum, so a fast drop lurches when it swallows a
 //     still one, then speeds up because it is heavier.
 #pragma once
@@ -46,6 +48,7 @@ public:
     float runSpeed = 1.0f;   // how fast running drops travel
     float minDrop = 2.5f;    // smallest raindrop radius, pixels at 1440p
     float maxDrop = 11.5f;   // largest raindrop radius, pixels at 1440p
+    float streakLife = 1.0f; // how long rivulets last before they drain and break up
 
     // A windscreen wiper pivoting below the bottom edge sweeps across and
     // back, pushing water ahead of the blade and off the screen.
@@ -84,7 +87,8 @@ private:
         };
         Lobe lobes[4] = {};
         int lobeCount = 0;
-        bool streaky = false;   // this run drags a continuous film instead of only beads
+        int rivulet = -1;       // index of the rivulet this drop is drawing out, or -1
+        bool streaky = false;   // this run drags a rivulet instead of only beads
         bool running = false;
         bool dead = false;
     };
@@ -99,6 +103,28 @@ private:
     void Merge(Drop& into, Drop& from);
     void ResetShape(Drop& d, bool ragged);
     void Steer(Drop& d);
+    void UpdateRivulets(float dt);
+    void EraseRivulets(float x, float y, float radius, int skip = -1);
+
+    // A thin line of water a running drop leaves behind it, as a chain of
+    // nodes about a pixel apart.
+    struct RivuletNode {
+        float x, y;
+        float w0;      // half-width when laid down, pixels
+        float born;    // time_ when laid down
+        float along;   // distance from the rivulet's start, pixels
+        float w = 0;   // current half-width
+        bool alive = true;
+    };
+    struct Rivulet {
+        std::vector<RivuletNode> nodes;
+        float wavelength;  // spacing of the segments it pinches into
+        float phase;
+        float wobble;      // phase of the sideways meander
+        float minX, minY, maxX, maxY;  // bounds, for cheap overlap tests
+        bool open = true;  // still being drawn out by its drop
+    };
+    void LayRivulet(Drop& d, float step);
 
     // Glass surface, on a coarse grid.
     void BuildSurface();
@@ -123,6 +149,7 @@ private:
     std::vector<float> wetTime_;  // when each cell was last wetted
 
     std::vector<Splat> drops_, mist_, erase_;
+    std::vector<Rivulet> rivulets_;
     Wiper wiper_;
     float wipeTime_ = 0, wipePrevAngle_ = 0;
 };

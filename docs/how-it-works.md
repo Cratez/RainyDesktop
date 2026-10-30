@@ -43,14 +43,27 @@ When capture is lost (display mode change, secure desktop, fullscreen
 switches), raindesk keeps the last good frame and recreates the duplication
 every 500 ms until it works again.
 
-### Frame loop
+### Threads and frame loop
 
-Each frame:
+The window thread owns every window (overlay, tray, settings) and only pumps
+messages. Dragging the settings window or opening the tray menu puts that
+thread in a modal loop, so the simulation and rendering run on a separate
+render thread that never waits on window messages. The window thread hands it
+a copy of the settings under a mutex, and wipe, dry and screenshot requests as
+atomic flags.
 
-1. Apply settings to the simulation and start an auto wipe if one is due.
-2. `RainSim::Update(dt)` advances the simulation and produces splat lists.
-3. `Render()` captures the desktop, runs the GPU passes below and presents with
+The swap chain allows only one queued frame (`SetMaximumFrameLatency(1)` and
+its waitable object). Each frame on the render thread:
+
+1. Wait until the compositor can take a new frame.
+2. Apply settings to the simulation and start an auto wipe if one is due.
+3. `RainSim::Update(dt)` advances the simulation and produces splat lists.
+4. `Render()` captures the desktop, runs the GPU passes below and presents with
    vsync.
+
+Capturing right after the wait keeps the refracted image as fresh as
+possible. It is still one refresh behind the real screen, because Desktop
+Duplication only hands over a frame after the compositor has shown it.
 
 ## 2. The simulation
 
@@ -62,8 +75,7 @@ screen, about 0.233 mm per pixel on a 27" panel, and scaled by
 are ellipses with a centre, radii and a water height:
 
 - **drops**: every drop on the glass, redrawn from scratch each frame.
-- **mist**: new tiny droplets and streak film, stamped once into a persistent
-  texture.
+- **mist**: new tiny droplets, stamped once into a persistent texture.
 - **erase**: where water was wiped off that persistent texture this frame.
 
 ### Two kinds of water
@@ -74,8 +86,8 @@ Tracking every droplet individually is expensive, so water is split in two
 - **Drops** are simulated individually: position, radius, velocity, shape.
   There are a few thousand of them, found through a uniform spatial grid
   (`BuildGrid`, `ForNeighbors`).
-- **Mist** is anything smaller than about 1.6 px in radius, plus the thin film of
-  streaks. It is never simulated. It is stamped into a texture that slowly
+- **Mist** is anything smaller than about 1.6 px in radius. It is never
+  simulated. It is stamped into a texture that slowly
   dries (about a minute), and running drops and the wiper erase it where they
   pass.
 
@@ -135,8 +147,8 @@ While running, a drop:
   then speeds up because it is heavier.
 - **sheds water.** On dry glass the trailing film breaks into a line of beads.
   Fast drops leave them further apart, and drops on a wet path leave fewer.
-  About half of runs (`streaky`) also drag a continuous thin film that slowly
-  drains the drop.
+  About half of runs (`streaky`) also draw out a thin **rivulet** (see
+  below), which slowly drains the drop.
 - **stops** once it has shed below its sliding size, unless it is on a wet
   path, and becomes a resting drop again.
 - leaves the simulation when it runs off the screen.
@@ -151,6 +163,29 @@ head plus two tail blobs that stretch with speed.
 
 **Size cap.** A merged drop's radius is capped at 2.2× the pin radius. Resting
 drops never get that far, because they let go well before it.
+
+### Rivulets
+
+`LayRivulet`, `UpdateRivulets`, `EraseRivulets`
+
+A rivulet is a thin line of water about half a drop wide, kept as a chain of
+nodes about a pixel apart. It meanders slightly and its width wanders. Each
+frame the nodes are drawn as small drop splats, so the rivulet refracts like
+any other water. A rivulet left on the glass is unstable and goes through
+these stages, each scaled by the **Streak life** setting:
+
+1. **Intact** for about a second after it is laid down.
+2. **Pinching.** Surface tension (the Plateau-Rayleigh instability) swells
+   the rivulet into bulges about twenty widths apart and thins the necks
+   between them. A neck that gets too thin snaps.
+3. **Beading up.** A segment that has pinched off pulls itself into one round
+   droplet of the same water, which then stays on the glass like any other
+   drop.
+4. **Draining.** From about 3.5 s on, what is left thins out and disappears.
+
+Because the top of a rivulet is the oldest part, the stages travel down it:
+the top drains, the middle pinches into segments, and the newest part is still
+a continuous line. Later drops and the wiper soak up any rivulet they cross.
 
 ### The wiper
 

@@ -63,6 +63,7 @@ const SliderDef kSliders[] = {
     {L"Running speed", &Settings::runSpeed, 0.3f, 3.0f, true, FormatTimes},
     {L"Smallest raindrop", &Settings::minDrop, 1.0f, 10.0f, false, FormatMm},
     {L"Largest raindrop", &Settings::maxDrop, 3.0f, 25.0f, false, FormatMm},
+    {L"Streak life", &Settings::streakLife, 0.3f, 4.0f, true, FormatTimes},
 };
 constexpr int kSliderCount = static_cast<int>(sizeof(kSliders) / sizeof(kSliders[0]));
 constexpr int kSliderSteps = 200;
@@ -174,6 +175,7 @@ void Load() {
     s.runSpeed = ReadFloat(L"runSpeed", def.runSpeed);
     s.minDrop = ReadFloat(L"minDrop", def.minDrop);
     s.maxDrop = ReadFloat(L"maxDrop", def.maxDrop);
+    s.streakLife = ReadFloat(L"streakLife", def.streakLife);
     s.autoWipeMinutes = static_cast<int>(ReadFloat(L"autoWipeMinutes", 0));
     s.paused = ReadFloat(L"paused", 0) != 0;
     for (const SliderDef& d : kSliders) s.*d.field = std::clamp(s.*d.field, d.lo, d.hi);
@@ -484,6 +486,7 @@ void Save() {
     WriteFloat(L"runSpeed", s.runSpeed);
     WriteFloat(L"minDrop", s.minDrop);
     WriteFloat(L"maxDrop", s.maxDrop);
+    WriteFloat(L"streakLife", s.streakLife);
     WriteFloat(L"autoWipeMinutes", static_cast<float>(s.autoWipeMinutes));
     WriteFloat(L"paused", s.paused ? 1.0f : 0.0f);
 }

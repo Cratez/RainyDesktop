@@ -24,7 +24,7 @@ cbuffer Frame : register(b0)
     float2 gResolution;  // overlay size in pixels
     float  gTime;        // seconds since start
     float  gHasDesktop;  // 1 once the first desktop frame has arrived
-    float  gDecay;       // fraction of the mist and streak film that dries off this frame
+    float  gDecay;       // fraction of the mist that dries off this frame
     float  gWiperActive;
     float  gWiperAngle;  // radians from straight up, positive = right
     float  gWiperInner;  // blade span, pixels from the pivot
@@ -209,11 +209,16 @@ float4 PSComposite(VSOut input) : SV_Target
     float3 col = gDesktop.SampleLevel(gLinear, uv, lod).rgb;
 
     // Light from above gathers in the lower half of the drop...
-    col *= 0.95 + 0.15 * saturate(n.y * 1.5);
+    // Water too thin to act as a lens gets none of this.
+    float lens = smoothstep(0.3, 2.0, radius / scale);
+    col *= 1 + lens * (0.15 * saturate(n.y * 1.5) - 0.05);
     // ...and the rim, where light reflects back inside, goes dark, most of all along the top.
     float rim = smoothstep(0.05, 0.7, steep);
     float top = saturate(-n.y / max(length(n.xy), 1e-4) * 0.5 + 0.5);
-    col *= 1 - rim * (0.1 + 0.7 * top * top);
+    // Tiny droplets have a dark band too narrow to resolve; it blends into a
+    // light grey speck, not a black ring.
+    float sizeK = lerp(0.45, 1.0, smoothstep(1.0, 5.0, radius / scale));
+    col *= 1 - rim * (0.1 + 0.7 * top * top) * sizeK;
 
     // Small reflection of a light above and to the left. Mist is too small
     // to show a crisp highlight; it would read as noise.

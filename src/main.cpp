@@ -23,17 +23,20 @@
 #include <d3d11.h>
 #include <d3dcompiler.h>
 #include <dcomp.h>
-#include <dxgi1_2.h>
+#include <dxgi1_3.h>
 #include <wincodec.h>
 #include <wrl/client.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <filesystem>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <type_traits>
 #include <vector>
 
@@ -102,6 +105,7 @@ struct App {
     std::chrono::steady_clock::time_point nextDuplRetry{};
 
     ComPtr<IDXGISwapChain1> swap;
+    HANDLE frameWait = nullptr;  // signalled when the compositor can take another frame
     ComPtr<ID3D11RenderTargetView> rtv;
     ComPtr<IDCompositionDevice> dcomp;
     ComPtr<IDCompositionTarget> dcompTarget;
@@ -116,10 +120,17 @@ struct App {
     WaterTarget mist;   // persistent: tiny droplets accumulate here
     SplatBuffer dropSplats, mistSplats, eraseSplats;
     bool clearMist = true;
-    bool screenshotRequested = false;
 
-    RainSim sim;
-    Settings settings;
+    // The simulation and rendering run on their own thread, so the window
+    // thread can sit in a modal loop (dragging the settings window, the tray
+    // menu) without freezing the rain. The window thread only talks to it
+    // through these.
+    std::atomic<bool> wipeRequested{false}, clearRequested{false}, screenshotRequested{false};
+    std::mutex settingsLock;
+    Settings shared;  // copy of settings for the render thread, under settingsLock
+
+    RainSim sim;       // render thread only
+    Settings settings; // window thread only; the tray and settings window edit it
     bool shownHidden = false;  // overlay currently hidden from the screen
 
     fs::path exeDir;
@@ -127,7 +138,8 @@ struct App {
     fs::file_time_type shaderTime{};
     std::chrono::steady_clock::time_point nextShaderCheck{};
 
-    bool running = true;
+    std::atomic<bool> running{true};
+    std::mutex logLock;
 };
 
 App g;
@@ -140,6 +152,7 @@ void Log(const char* fmt, ...) {
     va_end(args);
     OutputDebugStringA(buf);
     OutputDebugStringA("\n");
+    std::lock_guard lock(g.logLock);
     FILE* f = nullptr;
     if (_wfopen_s(&f, (g.exeDir / L"raindesk.log").c_str(), L"a") == 0 && f) {
         fprintf(f, "%s\n", buf);
@@ -283,7 +296,16 @@ void CreateSwapChainAndComposition() {
     sc.BufferCount = 2;
     sc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
     sc.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
+    sc.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
     CHECK(factory->CreateSwapChainForComposition(g.device.Get(), &sc, nullptr, &g.swap));
+
+    // Keep at most one frame queued. By default the CPU can run up to three
+    // frames ahead, and each queued frame shows a desktop image that much
+    // older, which shows as a ghost of a window's old position as it moves.
+    ComPtr<IDXGISwapChain2> swap2;
+    CHECK(g.swap.As(&swap2));
+    CHECK(swap2->SetMaximumFrameLatency(1));
+    g.frameWait = swap2->GetFrameLatencyWaitableObject();
 
     ComPtr<ID3D11Texture2D> back;
     CHECK(g.swap->GetBuffer(0, IID_PPV_ARGS(&back)));
@@ -515,7 +537,7 @@ void Render(float seconds, float dt) {
         c->resolution[1] = static_cast<float>(g.height);
         c->time = seconds;
         c->hasDesktop = g.haveDesktop ? 1.0f : 0.0f;
-        c->decay = 1.0f - std::exp(-dt / 60.0f);  // mist and streaks dry over about a minute
+        c->decay = 1.0f - std::exp(-dt / 60.0f);  // mist dries over about a minute
         const RainSim::Wiper& w = g.sim.GetWiper();
         c->wiperActive = w.active ? 1.0f : 0.0f;
         c->wiperAngle = w.angle;
@@ -581,8 +603,7 @@ void Render(float seconds, float dt) {
             g.ctx->OMSetBlendState(nullptr, nullptr, 0xffffffff);
         }
 
-        if (g.screenshotRequested) {
-            g.screenshotRequested = false;
+        if (g.screenshotRequested.exchange(false)) {
             SaveScreenshot();
         }
 
@@ -597,6 +618,19 @@ void Render(float seconds, float dt) {
     }
 }
 
+// Hands the current settings to the render thread. Window thread only.
+void PublishSettings() {
+    {
+        std::lock_guard lock(g.settingsLock);
+        g.shared = g.settings;
+    }
+    // Hidden: take the overlay off screen; the render thread idles meanwhile.
+    if (g.settings.hidden != g.shownHidden) {
+        g.shownHidden = g.settings.hidden;
+        ShowWindow(g.hwnd, g.shownHidden ? SW_HIDE : SW_SHOWNOACTIVATE);
+    }
+}
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
         case WM_HOTKEY:
@@ -605,7 +639,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     DestroyWindow(hwnd);
                     break;
                 case kHotkeyWipe:
-                    g.sim.StartWipe();
+                    g.wipeRequested = true;
                     break;
                 case kHotkeyScreenshot:
                     g.screenshotRequested = true;
@@ -615,7 +649,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     g.settings.rain *= wp == kHotkeyHarder ? 1.5f : 1.0f / 1.5f;
                     g.settings.rain = std::clamp(g.settings.rain, 0.1f, 6.0f);
                     controls::Save();
-                    Log("Rain amount %.2f, %zu drops", g.settings.rain, g.sim.DropCount());
+                    PublishSettings();
+                    Log("Rain amount %.2f", g.settings.rain);
                     break;
             }
             return 0;
@@ -676,6 +711,57 @@ void CreateOverlayWindow(HINSTANCE inst) {
     SetTimer(g.hwnd, kTimerTopmost, 1000, nullptr);
 }
 
+void RenderLoop() {
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);  // for WIC screenshots
+    using clock = std::chrono::steady_clock;
+    const auto start = clock::now();
+    auto last = start;
+    auto lastWipe = start;
+    while (g.running) {
+        Settings s;
+        {
+            std::lock_guard lock(g.settingsLock);
+            s = g.shared;
+        }
+        if (s.hidden) {
+            Sleep(100);
+            last = clock::now();
+            continue;
+        }
+
+        // Wait until the compositor can take a frame, then capture the desktop
+        // as late as possible so the drops show what is behind them now.
+        WaitForSingleObjectEx(g.frameWait, 100, TRUE);
+        ReloadShadersIfChanged();
+
+        auto now = clock::now();
+        float dt = std::min(std::chrono::duration<float>(now - last).count(), 0.05f);
+        last = now;
+
+        if (g.clearRequested.exchange(false)) {
+            g.sim.Clear();
+            g.clearMist = true;
+        }
+        if (g.wipeRequested.exchange(false)) g.sim.StartWipe();
+
+        g.sim.intensity = s.paused ? 0.0f : s.rain;
+        g.sim.mist = s.mist;
+        g.sim.friction = s.friction;
+        g.sim.runSpeed = s.runSpeed;
+        g.sim.minDrop = s.minDrop;
+        g.sim.maxDrop = s.maxDrop;
+        g.sim.streakLife = s.streakLife;
+        if (s.autoWipeMinutes > 0 && now - lastWipe > std::chrono::minutes(s.autoWipeMinutes)) {
+            g.sim.StartWipe();
+        }
+        if (g.sim.GetWiper().active) lastWipe = now;
+
+        g.sim.Update(dt);
+        Render(std::chrono::duration<float>(now - start).count(), dt);
+    }
+    CoUninitialize();
+}
+
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
@@ -703,60 +789,24 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     }
 
     ControlCallbacks cb;
-    cb.wipe = [] { g.sim.StartWipe(); };
-    cb.clearNow = [] {
-        g.sim.Clear();
-        g.clearMist = true;
-    };
+    cb.wipe = [] { g.wipeRequested = true; };
+    cb.clearNow = [] { g.clearRequested = true; };
     cb.screenshot = [] { g.screenshotRequested = true; };
+    cb.changed = PublishSettings;
     cb.quit = [] { DestroyWindow(g.hwnd); };
     controls::Init(inst, g.exeDir / L"raindesk.ini", g.settings, cb);
 
     ShowWindow(g.hwnd, SW_SHOWNOACTIVATE);
+    PublishSettings();
 
-    using clock = std::chrono::steady_clock;
-    const auto start = clock::now();
-    auto last = start;
-    auto lastWipe = start;
+    std::thread renderThread(RenderLoop);
     MSG msg{};
-    while (g.running) {
-        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-            if (msg.message == WM_QUIT) g.running = false;
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
-        if (!g.running) break;
-        ReloadShadersIfChanged();
-
-        auto now = clock::now();
-        float dt = std::min(std::chrono::duration<float>(now - last).count(), 0.05f);
-        last = now;
-
-        // Hidden: take the overlay off screen and idle until it is shown again.
-        if (g.settings.hidden != g.shownHidden) {
-            g.shownHidden = g.settings.hidden;
-            ShowWindow(g.hwnd, g.shownHidden ? SW_HIDE : SW_SHOWNOACTIVATE);
-        }
-        if (g.shownHidden) {
-            MsgWaitForMultipleObjects(0, nullptr, FALSE, 100, QS_ALLINPUT);
-            continue;
-        }
-
-        const Settings& s = g.settings;
-        g.sim.intensity = s.paused ? 0.0f : s.rain;
-        g.sim.mist = s.mist;
-        g.sim.friction = s.friction;
-        g.sim.runSpeed = s.runSpeed;
-        g.sim.minDrop = s.minDrop;
-        g.sim.maxDrop = s.maxDrop;
-        if (s.autoWipeMinutes > 0 && now - lastWipe > std::chrono::minutes(s.autoWipeMinutes)) {
-            g.sim.StartWipe();
-        }
-        if (g.sim.GetWiper().active) lastWipe = now;
-
-        g.sim.Update(dt);
-        Render(std::chrono::duration<float>(now - start).count(), dt);
+    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
     }
+    g.running = false;
+    renderThread.join();
     controls::Shutdown();
     Log("---- raindesk exiting ----");
     return 0;
