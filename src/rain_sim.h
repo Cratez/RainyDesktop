@@ -20,6 +20,9 @@
 //     segments (Plateau-Rayleigh) that pull up into a line of droplets.
 //   - Merging conserves momentum, so a fast drop lurches when it swallows a
 //     still one, then speeds up because it is heavier.
+//   - A jolt (a raindrop landing on or splashing into a drop, or the pane
+//     shaking in close thunder) helps a drop past its hysteresis for a
+//     moment, so drops that were nearly heavy enough to run are knocked loose.
 #pragma once
 
 #include <cstdint>
@@ -42,6 +45,16 @@ public:
     void AddDrop(float x, float y, float r) { Spawn(x, y, r); }  // for tests and tools
     void AddRaindrop(float x, float y, float r) { Impact(x, y, r); }  // a landing raindrop; for tests
     float WaterOnGlass() const;  // drops and rivulets, as volume (sum of r^3); for tests
+    float WindNow() const { return windNow_; }  // the wind along the glass this frame, gusts included
+
+    // Raindrops that hit the glass this frame, for the sound.
+    struct Hit {
+        float x, y;    // pixels
+        float r;       // radius, pixels at this resolution
+        float glance;  // 0 = head on .. 1 = fast and steep
+        bool splash;   // a big drop that splashed
+    };
+    const std::vector<Hit>& Hits() const { return hits_; }
 
     // Tunables, all 1.0 = default.
     float intensity = 1.0f;  // how hard it rains
@@ -56,6 +69,7 @@ public:
     float splash = 1.0f;     // how much raindrops splash on impact, 0 = they just appear
     float wind = 0.0f;       // steady wind along the glass, + blows to the right; about -3..3
     float gusts = 1.0f;      // how much the wind gusts and lulls around that, 0..2
+    float shake = 0.0f;      // how hard the pane is shaking right now (close thunder), 0..1
 
     // A windscreen wiper pivoting below the bottom edge sweeps across and
     // back, pushing water ahead of the blade and off the screen.
@@ -85,6 +99,7 @@ private:
         float steerDist = 0;    // distance left until the next path decision
         float eraseTimer = 0;   // resting drops slowly soak up mist around them
         float targetHeading = 0;
+        float jolt = 0;         // fraction of its grip a recent knock has shaken loose, decays fast
         // A resting drop's outline is the union of up to four blobs. When two
         // drops coalesce their blobs are kept, and because the contact line is
         // pinned the combined shape only slowly pulls itself round, so merged
@@ -101,6 +116,7 @@ private:
 
     float Rand(float lo = 0, float hi = 1) { return std::uniform_real_distribution<float>(lo, hi)(rng_); }
     void Impact(float x, float y, float r);
+    void Knock(float x, float y, float reach, float r, float glance);
     void Spawn(float x, float y, float r);
     void AddMist(float x, float y, float r);
     void BuildGrid();
@@ -203,6 +219,7 @@ private:
     std::vector<Splat> drops_, mist_, erase_;
     std::vector<Rivulet> rivulets_;
     std::vector<Splash> splashes_;
+    std::vector<Hit> hits_;
     Wiper wiper_;
     float wipeTime_ = 0, wipePrevAngle_ = 0;
 };

@@ -302,7 +302,10 @@ void RainSim::Impact(float x, float y, float r) {
     // Most hit fairly square on; now and then one comes in fast and steep.
     float glance = std::clamp(Rand() * Rand() * (0.7f + 0.8f * std::fabs(w) * heft), 0.0f, 1.0f);
 
-    if (r > 3.5f * s_ && Rand() < std::min(splash * 0.9f, 1.0f)) {
+    bool splashes = r > 3.5f * s_ && Rand() < std::min(splash * 0.9f, 1.0f);
+    hits_.push_back({x, y, r, glance, splashes});
+    Knock(x, y, r * (splashes ? 2.5f : 1.0f), r, glance);
+    if (splashes) {
         StartSplash(x, y, r, dx, dy, glance);
         return;
     }
@@ -342,6 +345,22 @@ void RainSim::Impact(float x, float y, float r) {
             Spawn(x + std::cos(a) * dist, y + std::sin(a) * dist, r * Rand(0.1f, 0.3f));
         }
     }
+}
+
+// A raindrop landing on a drop, or splashing into one, jolts it. Most of the
+// raindrop's momentum is along the glass (it was falling), far more than the
+// contact line can hold for that instant, so for a moment the drop has less
+// grip: one that was nearly heavy enough to run is knocked loose. The share
+// of the grip lost grows with the raindrop's share of the water.
+void RainSim::Knock(float x, float y, float reach, float r, float glance) {
+    float v = Volume(r);
+    ForNeighbors(x, y, reach + 24.0f * s_, [&](int j) {
+        Drop& o = live_[j];
+        if (o.dead || o.running) return;
+        float dx = o.x - x, dy = o.y - y, touch = o.r + reach;
+        if (dx * dx + dy * dy >= touch * touch) return;
+        o.jolt = std::min(o.jolt + (0.5f + glance) * v / (v + Volume(o.r)), 0.3f);
+    });
 }
 
 // ---------------------------------------------------------------- splashes
@@ -522,6 +541,7 @@ void RainSim::Update(float dt) {
     time_ += dt;
     UpdateWind(dt);
     mist_.clear();
+    hits_.clear();
     erase_.clear();
     BuildGrid();
 
@@ -532,10 +552,14 @@ void RainSim::Update(float dt) {
     // New rain. Mostly small drops, the odd big splat. Gusts bring bursts.
     float burst = std::fabs(wind) > 0.05f ? std::clamp(1.0f + 0.5f * gusts * gustSlow_, 0.4f, 2.5f) : 1.0f;
     dropAccum_ += dt * 10.0f * intensity * burst;
+    const float sizeShape = std::clamp(2.5f / std::pow(std::max(intensity * burst, 0.05f), 0.35f), 1.2f, 6.0f);
     while (dropAccum_ >= 1.0f) {
         dropAccum_ -= 1.0f;
         float lo = std::min(minDrop, maxDrop), hi = std::max(minDrop, maxDrop);
-        float r = s * (lo + (hi - lo) * std::pow(Rand(), 2.5f));
+        // Heavier rain has bigger drops (Marshall and Palmer: the mean size
+        // grows about as R^0.21), so the sizes lean toward the large end in a
+        // downpour and toward the small end in drizzle.
+        float r = s * (lo + (hi - lo) * std::pow(Rand(), sizeShape));
         Impact(Rand(0, w_), Rand(0, h_), r);
     }
     // Fine mist that never runs: it slowly fogs the glass until drops sweep it away.
@@ -610,6 +634,9 @@ void RainSim::Update(float dt) {
             if (d.dead) continue;
 
             float release = pinR * d.pin * (0.85f + 0.3f * aff) * (1.0f - 0.3f * Wetness(d.x, d.y));
+            // A knock or the pane shaking loosens the grip for a moment.
+            d.jolt *= std::exp(-dt / 0.15f);
+            release *= 1.0f - std::min(d.jolt + 0.25f * shake, 0.4f);
             // Wind adds a sideways pull to the weight the contact line must
             // hold, so heavy drops let go in a gust.
             float tilt = Tilt(d);

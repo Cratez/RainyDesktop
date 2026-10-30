@@ -2,3 +2,7 @@
 
 // The first icon resource is the one Explorer and the taskbar show for the exe.
 IDI_APP ICON "raindesk.ico"
+
+// The shaders, compiled at startup, so the exe runs on its own. A rain.hlsl
+// next to the exe takes their place (see LoadShaderSource in main.cpp).
+IDR_SHADER RCDATA "../shaders/rain.hlsl"

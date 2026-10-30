@@ -6,11 +6,15 @@
 // draw water that refracts that image. Pixels with no water are fully
 // transparent, so the desktop shows through and input goes straight to it.
 //
+// Behind the glass, Sky (sky.cpp) runs showers, lightning and the rain falling
+// outside, and RainSound (sound.cpp) plays it all.
+//
 // A drop icon in the tray opens the settings and menu (see controls.cpp).
 //
 // Hotkeys: Ctrl+Alt+Q quit, Ctrl+Alt+W run the wiper, Ctrl+Alt+Up/Down rain harder/softer,
 // Ctrl+Alt+S save a screenshot with the rain in it (ordinary screenshots can't see the overlay).
-// rain.hlsl next to the exe is recompiled live whenever it changes, and
+// The shaders (rain.hlsl) are built into the exe. A rain.hlsl next to the exe
+// takes their place and is recompiled live whenever it changes, for tuning;
 // errors go to raindesk.log next to the exe.
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -34,6 +38,8 @@
 #include <cstdarg>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -43,6 +49,8 @@
 #include "controls.h"
 #include "rain_sim.h"
 #include "resource.h"
+#include "sky.h"
+#include "sound.h"
 
 using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
@@ -67,7 +75,12 @@ struct FrameConstants {
     float wiperPivot[2];
     float wiperOuter;
     float pad;
+    float flash;       // lightning brightness, after the user's flash setting
+    float flashDir[2]; // toward the flash, on the screen
+    float refraction;
+    float sky[4];      // colour of the light from the sky, and daylight 0..1
 };
+static_assert(sizeof(FrameConstants) % 16 == 0, "constant buffers come in 16-byte rows");
 
 // A dynamic structured buffer of splats that grows as needed.
 struct SplatBuffer {
@@ -84,8 +97,8 @@ struct WaterTarget {
 };
 
 struct Shaders {
-    ComPtr<ID3D11VertexShader> fullscreen, splat;
-    ComPtr<ID3D11PixelShader> drop, mist, erase, composite, desktop, decay, wiper;
+    ComPtr<ID3D11VertexShader> fullscreen, splat, streak;
+    ComPtr<ID3D11PixelShader> drop, mist, erase, composite, desktop, decay, wiper, flash, streakPs;
 };
 
 struct App {
@@ -118,7 +131,7 @@ struct App {
 
     WaterTarget water;  // redrawn every frame from the drop list
     WaterTarget mist;   // persistent: tiny droplets accumulate here
-    SplatBuffer dropSplats, mistSplats, eraseSplats;
+    SplatBuffer dropSplats, mistSplats, eraseSplats, streaks;
     bool clearMist = true;
 
     // The simulation and rendering run on their own thread, so the window
@@ -130,12 +143,15 @@ struct App {
     Settings shared;  // copy of settings for the render thread, under settingsLock
 
     RainSim sim;       // render thread only
+    Sky sky;           // render thread only
+    RainSound sound;   // fed by the render thread, played by soundOut's thread
+    SoundOutput soundOut;
     Settings settings; // window thread only; the tray and settings window edit it
     bool shownHidden = false;  // overlay currently hidden from the screen
 
     fs::path exeDir;
-    fs::path shaderPath;
-    fs::file_time_type shaderTime{};
+    fs::path shaderPath;               // rain.hlsl next to the exe, used instead of the built-in shaders if present
+    fs::file_time_type shaderTime{};   // its last change, or {} when there is none
     std::chrono::steady_clock::time_point nextShaderCheck{};
 
     std::atomic<bool> running{true};
@@ -319,7 +335,10 @@ void CreateSwapChainAndComposition() {
     CHECK(g.dcomp->Commit());
 }
 
-void Upload(SplatBuffer& b, const std::vector<Splat>& splats) {
+// Uploads splats or streaks (both 32 bytes) into a structured buffer.
+template <typename T>
+void Upload(SplatBuffer& b, const std::vector<T>& splats) {
+    static_assert(sizeof(T) == sizeof(Splat), "one buffer layout for both");
     b.count = static_cast<UINT>(splats.size());
     if (b.count == 0) return;
     if (b.count > b.capacity) {
@@ -403,12 +422,29 @@ void UpdateDesktop() {
     g.dupl->ReleaseFrame();
 }
 
+// The shader source: rain.hlsl next to the exe if there is one (so the look
+// can be tuned while it runs), otherwise the copy built into the exe.
+std::string LoadShaderSource(bool builtIn, std::wstring& from) {
+    if (!builtIn) {
+        std::ifstream file(g.shaderPath, std::ios::binary);
+        if (file) {
+            from = g.shaderPath.wstring();
+            return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+        }
+    }
+    from = L"the copy built into raindesk.exe";
+    HRSRC res = FindResourceW(nullptr, MAKEINTRESOURCEW(IDR_SHADER), RT_RCDATA);
+    HGLOBAL data = res ? LoadResource(nullptr, res) : nullptr;
+    const char* bytes = data ? static_cast<const char*>(LockResource(data)) : nullptr;
+    return bytes ? std::string(bytes, SizeofResource(nullptr, res)) : std::string();
+}
+
 template <typename T>
-bool CompileEntry(const char* entry, const char* target, ComPtr<T>& out) {
+bool CompileEntry(const std::string& source, const char* entry, const char* target, ComPtr<T>& out) {
     UINT flags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_OPTIMIZATION_LEVEL3;
     ComPtr<ID3DBlob> blob, errors;
-    HRESULT hr = D3DCompileFromFile(g.shaderPath.c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, entry,
-                                    target, flags, 0, &blob, &errors);
+    HRESULT hr = D3DCompile(source.data(), source.size(), "rain.hlsl", nullptr, nullptr, entry, target, flags, 0,
+                            &blob, &errors);
     if (FAILED(hr)) {
         Log("Shader %s failed to compile (0x%08lX):\n%s", entry, static_cast<unsigned long>(hr),
             errors ? static_cast<const char*>(errors->GetBufferPointer()) : "(no compiler output)");
@@ -423,16 +459,23 @@ bool CompileEntry(const char* entry, const char* target, ComPtr<T>& out) {
 }
 
 // All or nothing: a broken edit keeps the last working shaders running.
-bool CompileShaders() {
+bool CompileShaders(bool builtIn = false) {
+    std::wstring from;
+    const std::string src = LoadShaderSource(builtIn, from);
     Shaders s;
-    bool ok = CompileEntry("VSFullscreen", "vs_5_0", s.fullscreen) && CompileEntry("VSSplat", "vs_5_0", s.splat) &&
-              CompileEntry("PSDrop", "ps_5_0", s.drop) && CompileEntry("PSMist", "ps_5_0", s.mist) &&
-              CompileEntry("PSErase", "ps_5_0", s.erase) && CompileEntry("PSComposite", "ps_5_0", s.composite) &&
-              CompileEntry("PSDesktop", "ps_5_0", s.desktop) && CompileEntry("PSDecay", "ps_5_0", s.decay) &&
-              CompileEntry("PSWiper", "ps_5_0", s.wiper);
-    if (!ok) return false;
+    bool ok = CompileEntry(src, "VSFullscreen", "vs_5_0", s.fullscreen) &&
+              CompileEntry(src, "VSSplat", "vs_5_0", s.splat) && CompileEntry(src, "PSDrop", "ps_5_0", s.drop) &&
+              CompileEntry(src, "PSMist", "ps_5_0", s.mist) && CompileEntry(src, "PSErase", "ps_5_0", s.erase) &&
+              CompileEntry(src, "PSComposite", "ps_5_0", s.composite) &&
+              CompileEntry(src, "PSDesktop", "ps_5_0", s.desktop) && CompileEntry(src, "PSDecay", "ps_5_0", s.decay) &&
+              CompileEntry(src, "PSWiper", "ps_5_0", s.wiper) && CompileEntry(src, "PSFlash", "ps_5_0", s.flash) &&
+              CompileEntry(src, "VSStreak", "vs_5_0", s.streak) && CompileEntry(src, "PSStreak", "ps_5_0", s.streakPs);
+    if (!ok) {
+        Log("Shaders from %ls failed to compile", from.c_str());
+        return false;
+    }
     g.shaders = s;
-    Log("Shaders loaded from %ls", g.shaderPath.c_str());
+    Log("Shaders loaded from %ls", from.c_str());
     return true;
 }
 
@@ -440,9 +483,11 @@ void ReloadShadersIfChanged() {
     auto now = std::chrono::steady_clock::now();
     if (now < g.nextShaderCheck) return;
     g.nextShaderCheck = now + std::chrono::milliseconds(500);
+    // A rain.hlsl appearing, changing or going away (back to the built-in shaders).
     std::error_code ec;
     auto t = fs::last_write_time(g.shaderPath, ec);
-    if (ec || t == g.shaderTime) return;
+    if (ec) t = {};
+    if (t == g.shaderTime) return;
     g.shaderTime = t;
     CompileShaders();
 }
@@ -473,6 +518,35 @@ bool WritePng(const fs::path& path, const D3D11_MAPPED_SUBRESOURCE& m) {
            SUCCEEDED(frame->Commit()) && SUCCEEDED(encoder->Commit());
 }
 
+// Draws everything that goes on the screen, each layer blended over the last:
+// the lightning flash and the rain outside (behind the glass), then the water
+// on the glass, then the wiper. Expects the render target, the fullscreen
+// vertex shader, the triangle list topology and the desktop, water and mist
+// textures to be bound.
+void DrawOverlay() {
+    g.ctx->OMSetBlendState(g.blendOver.Get(), nullptr, 0xffffffff);
+    if (g.sky.Flash() > 0.001f) {
+        g.ctx->PSSetShader(g.shaders.flash.Get(), nullptr, 0);
+        g.ctx->Draw(3, 0);
+    }
+    if (g.streaks.count) {
+        g.ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+        g.ctx->VSSetShader(g.shaders.streak.Get(), nullptr, 0);
+        g.ctx->VSSetShaderResources(3, 1, g.streaks.srv.GetAddressOf());
+        g.ctx->PSSetShader(g.shaders.streakPs.Get(), nullptr, 0);
+        g.ctx->DrawInstanced(4, g.streaks.count, 0, 0);
+        g.ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        g.ctx->VSSetShader(g.shaders.fullscreen.Get(), nullptr, 0);
+    }
+    g.ctx->PSSetShader(g.shaders.composite.Get(), nullptr, 0);
+    g.ctx->Draw(3, 0);
+    if (g.sim.GetWiper().active) {
+        g.ctx->PSSetShader(g.shaders.wiper.Get(), nullptr, 0);
+        g.ctx->Draw(3, 0);
+    }
+    g.ctx->OMSetBlendState(nullptr, nullptr, 0xffffffff);
+}
+
 // Our window is hidden from screen capture (so we can refract what is under
 // it), which also hides the rain from normal screenshots. This renders the
 // desktop with the rain on top and saves it next to the exe.
@@ -501,14 +575,7 @@ void SaveScreenshot() {
     g.ctx->OMSetBlendState(nullptr, nullptr, 0xffffffff);
     g.ctx->PSSetShader(g.shaders.desktop.Get(), nullptr, 0);
     g.ctx->Draw(3, 0);
-    g.ctx->OMSetBlendState(g.blendOver.Get(), nullptr, 0xffffffff);
-    g.ctx->PSSetShader(g.shaders.composite.Get(), nullptr, 0);
-    g.ctx->Draw(3, 0);
-    if (g.sim.GetWiper().active) {
-        g.ctx->PSSetShader(g.shaders.wiper.Get(), nullptr, 0);
-        g.ctx->Draw(3, 0);
-    }
-    g.ctx->OMSetBlendState(nullptr, nullptr, 0xffffffff);
+    DrawOverlay();
     g.ctx->CopyResource(staging.Get(), target.Get());
 
     D3D11_MAPPED_SUBRESOURCE m{};
@@ -527,7 +594,7 @@ void SaveScreenshot() {
     MessageBeep(ok ? MB_OK : MB_ICONERROR);
 }
 
-void Render(float seconds, float dt) {
+void Render(float seconds, float dt, const Settings& s) {
     UpdateDesktop();
 
     D3D11_MAPPED_SUBRESOURCE m{};
@@ -545,12 +612,23 @@ void Render(float seconds, float dt) {
         c->wiperPivot[0] = w.pivotX;
         c->wiperPivot[1] = w.pivotY;
         c->wiperOuter = w.outer;
+        // A flash stands out far more against a night sky than a grey day.
+        c->flash = g.sky.Flash() * s.flash * (1.5f - 0.5f * g.sky.Daylight());
+        c->flashDir[0] = g.sky.FlashDirX();
+        c->flashDir[1] = g.sky.FlashDirY();
+        c->refraction = s.refraction;
+        SkyColor sky = g.sky.Light();
+        c->sky[0] = sky.r;
+        c->sky[1] = sky.g;
+        c->sky[2] = sky.b;
+        c->sky[3] = g.sky.Daylight();
         g.ctx->Unmap(g.constants.Get(), 0);
     }
 
     Upload(g.dropSplats, g.sim.Drops());
     Upload(g.mistSplats, g.sim.Mist());
     Upload(g.eraseSplats, g.sim.Erase());
+    Upload(g.streaks, g.sky.Streaks());
 
     D3D11_VIEWPORT vp{0, 0, static_cast<float>(g.width), static_cast<float>(g.height), 0, 1};
     g.ctx->RSSetViewports(1, &vp);
@@ -583,25 +661,15 @@ void Render(float seconds, float dt) {
         g.ctx->OMSetRenderTargets(1, g.water.rtv.GetAddressOf(), nullptr);
         DrawSplats(g.dropSplats, g.shaders.drop.Get(), g.blendAdd.Get());
 
-        // Composite onto the screen.
+        // Onto the screen.
         ID3D11ShaderResourceView* noVs = nullptr;
         g.ctx->VSSetShaderResources(0, 1, &noVs);
         g.ctx->OMSetRenderTargets(1, g.rtv.GetAddressOf(), nullptr);
-        g.ctx->OMSetBlendState(nullptr, nullptr, 0xffffffff);
         g.ctx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         g.ctx->VSSetShader(g.shaders.fullscreen.Get(), nullptr, 0);
-        g.ctx->PSSetShader(g.shaders.composite.Get(), nullptr, 0);
         ID3D11ShaderResourceView* srvs[3] = {g.desktopSrv.Get(), g.water.srv.Get(), g.mist.srv.Get()};
         g.ctx->PSSetShaderResources(0, 3, srvs);
-        g.ctx->Draw(3, 0);
-
-        if (g.sim.GetWiper().active) {
-            g.ctx->OMSetBlendState(g.blendOver.Get(), nullptr, 0xffffffff);
-            g.ctx->PSSetShader(g.shaders.wiper.Get(), nullptr, 0);
-            g.ctx->Draw(3, 0);
-            g.ctx->PSSetShader(g.shaders.composite.Get(), nullptr, 0);
-            g.ctx->OMSetBlendState(nullptr, nullptr, 0xffffffff);
-        }
+        DrawOverlay();
 
         if (g.screenshotRequested.exchange(false)) {
             SaveScreenshot();
@@ -711,12 +779,40 @@ void CreateOverlayWindow(HINSTANCE inst) {
     SetTimer(g.hwnd, kTimerTopmost, 1000, nullptr);
 }
 
+// The latitude of the country in Windows' region settings (its middle), so
+// daylight can follow the sun without asking where you are.
+float RegionLatitude() {
+    GEOID id = GetUserGeoID(GEOCLASS_NATION);
+    wchar_t buf[32];
+    if (id != GEOID_NOT_AVAILABLE && GetGeoInfoW(id, GEO_LATITUDE, buf, 32, 0) > 0)
+        return static_cast<float>(_wtof(buf));
+    return 40.0f;
+}
+
+// Tells the sky the date, the time and roughly where you are. The longitude
+// comes from the time zone (15 degrees an hour from Greenwich), which is
+// close to where most people in it live.
+void UpdateClock() {
+    static const float latitude = RegionLatitude();
+    SYSTEMTIME utc;
+    GetSystemTime(&utc);
+    TIME_ZONE_INFORMATION tz;
+    GetTimeZoneInformation(&tz);
+    float longitude = -static_cast<float>(tz.Bias) / 4.0f;
+    static const int kDaysBefore[12] = {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
+    bool leap = utc.wYear % 4 == 0 && (utc.wYear % 100 != 0 || utc.wYear % 400 == 0);
+    int day = kDaysBefore[(utc.wMonth - 1) % 12] + utc.wDay + (leap && utc.wMonth > 2 ? 1 : 0);
+    float hours = utc.wHour + utc.wMinute / 60.0f + utc.wSecond / 3600.0f;
+    g.sky.SetClock(day, hours, longitude, latitude);
+}
+
 void RenderLoop() {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);  // for WIC screenshots
     using clock = std::chrono::steady_clock;
     const auto start = clock::now();
     auto last = start;
     auto lastWipe = start;
+    auto lastClock = start - std::chrono::minutes(1);
     while (g.running) {
         Settings s;
         {
@@ -724,6 +820,7 @@ void RenderLoop() {
             s = g.shared;
         }
         if (s.hidden) {
+            g.sound.SetLevels(0, 0, 0, 0);
             Sleep(100);
             last = clock::now();
             continue;
@@ -744,7 +841,19 @@ void RenderLoop() {
         }
         if (g.wipeRequested.exchange(false)) g.sim.StartWipe();
 
-        g.sim.intensity = s.paused ? 0.0f : s.rain;
+        // Passing showers set how hard it rains right now.
+        g.sky.rain = s.rain;
+        g.sky.showers = s.weather;
+        g.sky.outside = s.outside;
+        g.sky.lightning = s.lightning;
+        g.sky.gusts = s.gusts;
+        g.sky.daylight = s.daylight;
+        g.sky.raining = !s.paused;
+        if (now - lastClock > std::chrono::seconds(10)) {
+            UpdateClock();
+            lastClock = now;
+        }
+        g.sim.intensity = s.paused ? 0.0f : s.rain * g.sky.Showers();
         g.sim.mist = s.mist;
         g.sim.friction = s.friction;
         g.sim.runSpeed = s.runSpeed;
@@ -756,13 +865,25 @@ void RenderLoop() {
         g.sim.splash = s.splash;
         g.sim.wind = s.wind;
         g.sim.gusts = s.gusts;
+        g.sim.shake = g.sky.Shake() * s.shake;
         if (s.autoWipeMinutes > 0 && now - lastWipe > std::chrono::minutes(s.autoWipeMinutes)) {
             g.sim.StartWipe();
         }
         if (g.sim.GetWiper().active) lastWipe = now;
 
         g.sim.Update(dt);
-        Render(std::chrono::duration<float>(now - start).count(), dt);
+        g.sky.Update(dt, g.sim.WindNow());
+
+        // Sound: a tap for every raindrop that hit the glass, thunder for every flash.
+        g.sound.SetLevels(s.volume, s.glassSound, s.outsideSound, s.thunder);
+        g.sound.SetWeather(g.sky.RainRate(), g.sim.WindNow());
+        const float mmPerPixel = 336.0f / static_cast<float>(g.height);  // a 27" panel is 336 mm tall
+        for (const RainSim::Hit& h : g.sim.Hits())
+            g.sound.Tap(h.x / static_cast<float>(g.width) * 2.0f - 1.0f, h.r * mmPerPixel, h.glance, h.splash);
+        for (const ThunderEvent& t : g.sky.TakeThunder())
+            g.sound.Thunder(t.delay, t.distance, t.power, t.pan, std::min(t.rattle * s.shake, 1.0f));
+
+        Render(std::chrono::duration<float>(now - start).count(), dt, s);
     }
     CoUninitialize();
 }
@@ -784,11 +905,14 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     CreateOverlayWindow(inst);
     CreateSwapChainAndComposition();
     g.sim.Reset(static_cast<float>(g.width), static_cast<float>(g.height));
+    g.sky.Reset(static_cast<float>(g.width), static_cast<float>(g.height));
 
     std::error_code ec;
     g.shaderTime = fs::last_write_time(g.shaderPath, ec);
-    if (!CompileShaders()) {
-        MessageBoxW(nullptr, L"rain.hlsl failed to compile. See raindesk.log next to the exe.", L"raindesk",
+    if (ec) g.shaderTime = {};
+    // A rain.hlsl next to the exe that doesn't compile falls back to the built-in shaders.
+    if (!CompileShaders() && !CompileShaders(true)) {
+        MessageBoxW(nullptr, L"The shaders failed to compile. See raindesk.log next to the exe.", L"raindesk",
                     MB_ICONERROR);
         return 1;
     }
@@ -805,6 +929,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     PublishSettings();
 
     std::thread renderThread(RenderLoop);
+    g.soundOut.Start(&g.sound);
     MSG msg{};
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
         TranslateMessage(&msg);
@@ -812,6 +937,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
     }
     g.running = false;
     renderThread.join();
+    g.soundOut.Stop();
     controls::Shutdown();
     Log("---- raindesk exiting ----");
     return 0;

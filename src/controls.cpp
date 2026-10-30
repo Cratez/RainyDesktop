@@ -43,38 +43,77 @@ enum ControlId : int {
     kIdClose,
 };
 
+// Every slider is one row of this table, which also names its key in
+// raindesk.ini, so a new setting needs only a field in Settings and a row here.
 struct SliderDef {
+    const wchar_t* section;  // heading shown above the first row of each section
     const wchar_t* label;
+    const wchar_t* key;      // in raindesk.ini
     float Settings::*field;
     float lo, hi;
     bool logScale;
     // Formats the value for display.
     void (*format)(float v, wchar_t* out, size_t n);
+    int column;
 };
 
 void FormatTimes(float v, wchar_t* out, size_t n) { swprintf_s(out, n, L"%.1fx", v); }
+void FormatOffTimes(float v, wchar_t* out, size_t n) {
+    if (v < 0.01f)
+        swprintf_s(out, n, L"off");
+    else
+        swprintf_s(out, n, L"%.1fx", v);
+}
+void FormatPercent(float v, wchar_t* out, size_t n) {
+    if (v < 0.005f)
+        swprintf_s(out, n, L"off");
+    else
+        swprintf_s(out, n, L"%d%%", static_cast<int>(std::lround(v * 100.0f)));
+}
 void FormatWind(float v, wchar_t* out, size_t n) {
     if (std::fabs(v) < 0.05f)
         swprintf_s(out, n, L"calm");
     else
         swprintf_s(out, n, v < 0 ? L"\u2190 %.1f" : L"%.1f \u2192", std::fabs(v));
 }
+void FormatDaylight(float v, wchar_t* out, size_t n) {
+    if (v < 0)
+        swprintf_s(out, n, L"auto");
+    else if (v < 0.05f)
+        swprintf_s(out, n, L"night");
+    else if (v > 0.95f)
+        swprintf_s(out, n, L"day");
+    else
+        swprintf_s(out, n, L"%d%%", static_cast<int>(std::lround(v * 100.0f)));
+}
 // Radius in pixels at 1440p on a 27" panel (about 0.233 mm per pixel) to a diameter in mm.
 void FormatMm(float v, wchar_t* out, size_t n) { swprintf_s(out, n, L"%.1f mm", v * 2.0f * 0.233f); }
 
 const SliderDef kSliders[] = {
-    {L"Rain amount", &Settings::rain, 0.1f, 6.0f, true, FormatTimes},
-    {L"Fine mist", &Settings::mist, 0.0f, 3.0f, false, FormatTimes},
-    {L"Glass grip (friction)", &Settings::friction, 0.4f, 2.5f, true, FormatTimes},
-    {L"Running speed", &Settings::runSpeed, 0.3f, 3.0f, true, FormatTimes},
-    {L"Smallest raindrop", &Settings::minDrop, 1.0f, 10.0f, false, FormatMm},
-    {L"Largest raindrop", &Settings::maxDrop, 3.0f, 25.0f, false, FormatMm},
-    {L"Streak life", &Settings::streakLife, 0.3f, 4.0f, true, FormatTimes},
-    {L"Speed to leave a trail", &Settings::trailSpeed, 0.3f, 3.0f, true, FormatTimes},
-    {L"Bead-up speed", &Settings::beadSpeed, 0.3f, 3.0f, true, FormatTimes},
-    {L"Splashes", &Settings::splash, 0.0f, 2.0f, false, FormatTimes},
-    {L"Wind", &Settings::wind, -3.0f, 3.0f, false, FormatWind},
-    {L"Gustiness", &Settings::gusts, 0.0f, 2.0f, false, FormatTimes},
+    {L"Rain", L"Rain amount", L"rain", &Settings::rain, 0.1f, 6.0f, true, FormatTimes, 0},
+    {nullptr, L"Fine mist", L"mist", &Settings::mist, 0.0f, 3.0f, false, FormatTimes, 0},
+    {nullptr, L"Smallest raindrop", L"minDrop", &Settings::minDrop, 1.0f, 10.0f, false, FormatMm, 0},
+    {nullptr, L"Largest raindrop", L"maxDrop", &Settings::maxDrop, 3.0f, 25.0f, false, FormatMm, 0},
+    {nullptr, L"Splashes", L"splash", &Settings::splash, 0.0f, 2.0f, false, FormatTimes, 0},
+    {L"On the glass", L"Glass grip (friction)", L"friction", &Settings::friction, 0.4f, 2.5f, true, FormatTimes, 0},
+    {nullptr, L"Running speed", L"runSpeed", &Settings::runSpeed, 0.3f, 3.0f, true, FormatTimes, 0},
+    {nullptr, L"Speed to leave a trail", L"trailSpeed", &Settings::trailSpeed, 0.3f, 3.0f, true, FormatTimes, 0},
+    {nullptr, L"Streak life", L"streakLife", &Settings::streakLife, 0.3f, 4.0f, true, FormatTimes, 0},
+    {nullptr, L"Bead-up speed", L"beadSpeed", &Settings::beadSpeed, 0.3f, 3.0f, true, FormatTimes, 0},
+    {nullptr, L"Refraction", L"refraction", &Settings::refraction, 0.3f, 2.0f, true, FormatTimes, 0},
+    {L"Weather", L"Wind", L"wind", &Settings::wind, -3.0f, 3.0f, false, FormatWind, 1},
+    {nullptr, L"Gustiness", L"gusts", &Settings::gusts, 0.0f, 2.0f, false, FormatTimes, 1},
+    {nullptr, L"Showers come and go", L"weather", &Settings::weather, 0.0f, 2.0f, false, FormatOffTimes, 1},
+    {nullptr, L"Rain outside", L"outside", &Settings::outside, 0.0f, 3.0f, false, FormatOffTimes, 1},
+    // Below zero (the left end of the slider) the daylight follows the sun.
+    {nullptr, L"Daylight", L"daylight", &Settings::daylight, -0.1f, 1.0f, false, FormatDaylight, 1},
+    {L"Storm", L"Lightning", L"lightning", &Settings::lightning, 0.0f, 3.0f, false, FormatOffTimes, 1},
+    {nullptr, L"Flash brightness", L"flash", &Settings::flash, 0.0f, 2.0f, false, FormatTimes, 1},
+    {nullptr, L"Thunder shakes the glass", L"shake", &Settings::shake, 0.0f, 2.0f, false, FormatOffTimes, 1},
+    {L"Sound", L"Volume", L"volume", &Settings::volume, 0.0f, 1.0f, false, FormatPercent, 1},
+    {nullptr, L"Drops on the glass", L"glassSound", &Settings::glassSound, 0.0f, 2.0f, false, FormatOffTimes, 1},
+    {nullptr, L"Rain outside", L"outsideSound", &Settings::outsideSound, 0.0f, 2.0f, false, FormatOffTimes, 1},
+    {nullptr, L"Thunder", L"thunder", &Settings::thunder, 0.0f, 2.0f, false, FormatOffTimes, 1},
 };
 constexpr int kSliderCount = static_cast<int>(sizeof(kSliders) / sizeof(kSliders[0]));
 constexpr int kSliderSteps = 200;
@@ -88,7 +127,7 @@ struct State {
     ControlCallbacks cb;
     HWND tray = nullptr;      // hidden window that owns the tray icon
     HWND window = nullptr;    // settings window, when open
-    HFONT font = nullptr;
+    HFONT font = nullptr, headingFont = nullptr;
     HICON icon = nullptr, iconSmall = nullptr;
     UINT taskbarCreated = 0;
     NOTIFYICONDATAW nid{};
@@ -180,21 +219,9 @@ void WriteFloat(const wchar_t* key, float v) {
 void Load() {
     Settings& s = *st.settings;
     Settings def;
-    s.rain = ReadFloat(L"rain", def.rain);
-    s.mist = ReadFloat(L"mist", def.mist);
-    s.friction = ReadFloat(L"friction", def.friction);
-    s.runSpeed = ReadFloat(L"runSpeed", def.runSpeed);
-    s.minDrop = ReadFloat(L"minDrop", def.minDrop);
-    s.maxDrop = ReadFloat(L"maxDrop", def.maxDrop);
-    s.streakLife = ReadFloat(L"streakLife", def.streakLife);
-    s.trailSpeed = ReadFloat(L"trailSpeed", def.trailSpeed);
-    s.beadSpeed = ReadFloat(L"beadSpeed", def.beadSpeed);
-    s.splash = ReadFloat(L"splash", def.splash);
-    s.wind = ReadFloat(L"wind", def.wind);
-    s.gusts = ReadFloat(L"gusts", def.gusts);
+    for (const SliderDef& d : kSliders) s.*d.field = std::clamp(ReadFloat(d.key, def.*d.field), d.lo, d.hi);
     s.autoWipeMinutes = static_cast<int>(ReadFloat(L"autoWipeMinutes", 0));
     s.paused = ReadFloat(L"paused", 0) != 0;
-    for (const SliderDef& d : kSliders) s.*d.field = std::clamp(s.*d.field, d.lo, d.hi);
 }
 
 // ---------------------------------------------------------------- settings window
@@ -233,18 +260,34 @@ void BuildWindow(HWND hwnd) {
     SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0, dpi);
     st.font = CreateFontIndirectW(&ncm.lfMessageFont);
 
-    int y = S(14);
-    const int labelW = S(150), sliderW = S(220), valueW = S(70), rowH = S(34), x0 = S(14);
+    if (st.headingFont) DeleteObject(st.headingFont);
+    LOGFONTW heading = ncm.lfMessageFont;
+    heading.lfWeight = FW_SEMIBOLD;
+    st.headingFont = CreateFontIndirectW(&heading);
+
+    // Two columns of sliders, each grouped under headings.
+    const int labelW = S(150), sliderW = S(200), valueW = S(64), rowH = S(32), x0 = S(14);
+    const int columnW = labelW + sliderW + S(8) + valueW + S(24);
+    int colY[2] = {S(10), S(10)};
     for (int i = 0; i < kSliderCount; ++i) {
-        Child(L"STATIC", kSliders[i].label, SS_LEFT, x0, y + S(6), labelW, S(20), -1);
-        HWND tb = Child(TRACKBAR_CLASSW, L"", TBS_HORZ | TBS_NOTICKS | WS_TABSTOP, x0 + labelW, y, sliderW, S(30),
+        const SliderDef& d = kSliders[i];
+        int x = x0 + d.column * columnW;
+        int& y = colY[d.column];
+        if (d.section) {
+            if (y > S(10)) y += S(8);
+            HWND h = Child(L"STATIC", d.section, SS_LEFT, x, y, labelW + sliderW, S(20), -1);
+            SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(st.headingFont), TRUE);
+            y += S(24);
+        }
+        Child(L"STATIC", d.label, SS_LEFT, x, y + S(6), labelW, S(20), -1);
+        HWND tb = Child(TRACKBAR_CLASSW, L"", TBS_HORZ | TBS_NOTICKS | WS_TABSTOP, x + labelW, y, sliderW, S(30),
                         kIdSliderBase + i);
         SendMessageW(tb, TBM_SETRANGE, TRUE, MAKELPARAM(0, kSliderSteps));
         SendMessageW(tb, TBM_SETPAGESIZE, 0, kSliderSteps / 10);
-        Child(L"STATIC", L"", SS_LEFT, x0 + labelW + sliderW + S(8), y + S(6), valueW, S(20), kIdValueBase + i);
+        Child(L"STATIC", L"", SS_LEFT, x + labelW + sliderW + S(8), y + S(6), valueW, S(20), kIdValueBase + i);
         y += rowH;
     }
-    y += S(4);
+    int y = std::max(colY[0], colY[1]) + S(8);
     Child(L"BUTTON", L"Pause rain", BS_AUTOCHECKBOX | WS_TABSTOP, x0, y, S(200), S(24), kIdPause);
     y += S(36);
     const int bw = S(110), bh = S(30), gap = S(10);
@@ -253,7 +296,7 @@ void BuildWindow(HWND hwnd) {
     Child(L"BUTTON", L"Close", BS_DEFPUSHBUTTON | WS_TABSTOP, x0 + 2 * (bw + gap), y, bw, bh, kIdClose);
     y += bh + S(14);
 
-    RECT rc{0, 0, x0 * 2 + labelW + sliderW + S(8) + valueW, y};
+    RECT rc{0, 0, x0 * 2 + columnW * 2 - S(24), y};
     AdjustWindowRectExForDpi(&rc, GetWindowLongW(hwnd, GWL_STYLE), FALSE, GetWindowLongW(hwnd, GWL_EXSTYLE), dpi);
     SetWindowPos(hwnd, nullptr, 0, 0, rc.right - rc.left, rc.bottom - rc.top, SWP_NOMOVE | SWP_NOZORDER);
     SyncWindow();
@@ -496,18 +539,7 @@ void OpenSettings() {
 
 void Save() {
     const Settings& s = *st.settings;
-    WriteFloat(L"rain", s.rain);
-    WriteFloat(L"mist", s.mist);
-    WriteFloat(L"friction", s.friction);
-    WriteFloat(L"runSpeed", s.runSpeed);
-    WriteFloat(L"minDrop", s.minDrop);
-    WriteFloat(L"maxDrop", s.maxDrop);
-    WriteFloat(L"streakLife", s.streakLife);
-    WriteFloat(L"trailSpeed", s.trailSpeed);
-    WriteFloat(L"beadSpeed", s.beadSpeed);
-    WriteFloat(L"splash", s.splash);
-    WriteFloat(L"wind", s.wind);
-    WriteFloat(L"gusts", s.gusts);
+    for (const SliderDef& d : kSliders) WriteFloat(d.key, s.*d.field);
     WriteFloat(L"autoWipeMinutes", static_cast<float>(s.autoWipeMinutes));
     WriteFloat(L"paused", s.paused ? 1.0f : 0.0f);
 }

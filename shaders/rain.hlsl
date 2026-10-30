@@ -1,10 +1,14 @@
-// raindesk shaders. raindesk.exe recompiles this file whenever it is saved, so
-// the look can be tuned while it runs.
+// raindesk shaders, built into raindesk.exe. A copy of this file next to the
+// exe takes their place and is recompiled whenever it is saved, so the look
+// can be tuned while it runs.
 //
 // Passes, every frame:
 //   1. VSSplat + PSMist / PSErase into the persistent mist texture
 //   2. VSSplat + PSDrop into the water texture (cleared each frame, additive)
-//   3. VSFullscreen + PSComposite onto the screen: refracts the desktop
+//   3. Onto the screen, each blended over the last:
+//      VSFullscreen + PSFlash: lightning lighting up the world outside
+//      VSStreak + PSStreak: rain falling outside, behind the glass
+//      VSFullscreen + PSComposite: the water on the glass, refracting the desktop
 //
 // Water textures hold (sum of height * field, sum of field) per pixel, where
 // field is each sprite's smooth falloff. The summed field is a metaball: it
@@ -31,6 +35,10 @@ cbuffer Frame : register(b0)
     float2 gWiperPivot;  // below the bottom edge
     float  gWiperOuter;
     float  gPad;
+    float  gFlash;       // lightning brightness now, 0 = none
+    float2 gFlashDir;    // direction on the screen toward the flash
+    float  gRefraction;  // how strongly drops bend the view, 1 = default
+    float4 gSky;         // rgb: the light from the sky outside; a: daylight, 0 = night .. 1 = day
 };
 
 struct Splat
@@ -41,6 +49,15 @@ struct Splat
     float3 pad;
 };
 StructuredBuffer<Splat> gSplats : register(t0);
+
+struct Streak
+{
+    float2 p0, p1;  // pixels: where the drop was at the start of the exposure, and now
+    float  width;   // full width at half maximum, pixels
+    float  alpha;   // peak coverage
+    float2 pad;
+};
+StructuredBuffer<Streak> gStreaks : register(t3);
 
 static const float kEdge = 0.12;
 
@@ -154,6 +171,75 @@ float4 PSWiper(VSOut input) : SV_Target
     return float4(col * a, a);
 }
 
+// ---------------------------------------------------------------- outside
+
+// Lightning lights up everything outside the window, brightest toward the
+// flash and the sky above.
+float4 PSFlash(VSOut input) : SV_Target
+{
+    float2 uv = input.uv;
+    float2 fromCentre = normalize(uv - 0.5 + float2(0, 0.0001));
+    float toward = 0.65 + 0.35 * saturate(dot(fromCentre, gFlashDir));
+    float sky = 0.75 + 0.25 * (1 - uv.y);
+    float a = saturate(gFlash * 0.22 * toward * sky);
+    return float4(float3(0.86, 0.9, 1.0) * a, a);
+}
+
+struct StreakOut
+{
+    float4 pos   : SV_Position;
+    float2 uv    : TEXCOORD0;  // pixels: along the streak from p0, and across it
+    float  len   : TEXCOORD1;
+    float  sigma : TEXCOORD2;
+    float  alpha : TEXCOORD3;
+};
+
+// A quad around the streak, wide enough for its soft edges.
+StreakOut VSStreak(uint vid : SV_VertexID, uint iid : SV_InstanceID)
+{
+    Streak s = gStreaks[iid];
+    float2 d = s.p1 - s.p0;
+    float len = length(d);
+    float2 along = len > 1e-3 ? d / len : float2(0, 1);
+    float2 across = float2(-along.y, along.x);
+    float sigma = s.width / 2.355;  // Gaussian with that full width at half maximum
+    float pad = sigma * 3 + 1;
+    float u = (vid & 1) ? len + pad : -pad;
+    float v = (vid >> 1) ? pad : -pad;
+    float2 px = s.p0 + along * u + across * v;
+    StreakOut o;
+    o.pos = float4(px / gResolution * float2(2, -2) + float2(-1, 1), 0, 1);
+    o.uv = float2(u, v);
+    o.len = len;
+    o.sigma = sigma;
+    o.alpha = s.alpha;
+    return o;
+}
+
+// A falling drop smeared over the exposure. Each drop is a tiny wide-angle
+// lens, so what it shows is mostly the bright sky (Garg and Nayar: drops are
+// nearly always brighter than what is behind them), and in a lightning flash
+// every streak lights up.
+float4 PSStreak(StreakOut i) : SV_Target
+{
+    float s2 = 2 * i.sigma * i.sigma;
+    float a = i.alpha * exp(-i.uv.y * i.uv.y / s2);
+    float beyond = max(-i.uv.x, i.uv.x - i.len);  // round, soft ends
+    if (beyond > 0)
+        a *= exp(-beyond * beyond / s2);
+    if (a < 1.0 / 512)
+        discard;
+    float3 behind = gDesktop.SampleLevel(gLinear, i.pos.xy / gResolution, 5).rgb;
+    // At night, drops near the window catch the light from streetlights and
+    // the room, so they still show, warmer and dimmer.
+    float3 light = gSky.rgb + (1 - gSky.a) * float3(0.30, 0.24, 0.16);
+    float3 col = lerp(behind, light, 0.7) * (1 + 2.5 * gFlash);
+    a = saturate(a);
+    return float4(saturate(col) * a, a);
+}
+
+// ---------------------------------------------------------------- composite helpers
+
 float2 WaterAt(int2 p)
 {
     return gWater.Load(int3(p, 0)) + gMist.Load(int3(p, 0));
@@ -203,7 +289,7 @@ float4 PSComposite(VSOut input) : SV_Target
 
     // Each drop is a small lens. Like rain on a window, it shows a shrunken,
     // upside-down and out-of-focus picture of a wide patch of what is behind it.
-    float reach = radius * 2.6 + 2.0 * scale;
+    float reach = (radius * 2.6 + 2.0 * scale) * gRefraction;
     float2 uv = (input.pos.xy - n.xy * reach) / gResolution;
     float lod = log2(1 + radius * 0.35) + steep * 1.5;
     float3 col = gDesktop.SampleLevel(gLinear, uv, lod).rgb;
@@ -220,19 +306,41 @@ float4 PSComposite(VSOut input) : SV_Target
     float sizeK = lerp(0.45, 1.0, smoothstep(1.0, 5.0, radius / scale));
     col *= 1 - rim * (0.1 + 0.7 * top * top) * sizeK;
 
-    // Daylight from the sky above the window is refracted to the bottom edge
+    // Light from the sky above the window is refracted to the bottom edge
     // of every drop (the lens flips it), giving the bright crescent that
-    // makes rain visible even against something dark. It barely shows over
+    // makes rain visible even against something dark: a cool grey in the day,
+    // a dim orange glow from streetlit clouds at night. It barely shows over
     // bright content, which is already that bright.
     float crescent = saturate(n.y * 1.6) * smoothstep(0.1, 0.8, steep) * lens;
-    col += 0.3 * crescent * (1 - 0.7 * dot(col, float3(0.3, 0.59, 0.11)));
+    float3 skyGlow = 0.36 * gSky.rgb + (1 - gSky.a) * float3(0.08, 0.06, 0.04);
+    col += skyGlow * crescent * (1 - 0.7 * dot(col, float3(0.3, 0.59, 0.11)));
 
-    // Small reflection of a light above and to the left. Mist is too small
-    // to show a crisp highlight; it would read as noise.
+    // By day, a soft reflection of the bright sky above and to the left.
+    // Mist is too small to show a crisp highlight; it would read as noise.
     float3 L = normalize(float3(-0.35, -0.75, 0.55));
     float3 H = normalize(L + float3(0, 0, 1));
     float sheen = smoothstep(1.5, 6.0, radius / scale);
-    col += pow(saturate(dot(n, H)), 80.0) * 0.4 * sheen;
+    col += pow(saturate(dot(n, H)), 80.0) * 0.4 * sheen * gSky.a;
+    // By night, each drop shows tiny upside-down images of the lights
+    // outside: a warm streetlight up to the left appears as a bright point
+    // low on the drop's right side, a cooler one up to the right low on its left.
+    float night = sheen * (1 - gSky.a);
+    float3 lamp = normalize(float3(0.3, 0.55, 0.78));
+    float3 lamp2 = normalize(float3(-0.45, 0.35, 0.82));
+    col += night * (pow(saturate(dot(n, lamp)), 150.0) * float3(1.0, 0.78, 0.5) +
+                    pow(saturate(dot(n, lamp2)), 220.0) * float3(0.4, 0.45, 0.5));
+
+    // Lightning: every drop catches the flash. The lens flips it, so the
+    // bright crescent sits on the side away from the flash, with a glint
+    // on the side facing it, and the view through the drop brightens too.
+    if (gFlash > 0.001)
+    {
+        float3 F = normalize(float3(gFlashDir * 0.8, 0.6));
+        float3 HF = normalize(F + float3(0, 0, 1));
+        float away = saturate(dot(n.xy, -gFlashDir) * 1.6) * smoothstep(0.1, 0.8, steep) * lens;
+        float glint = pow(saturate(dot(n, HF)), 40.0) * sheen;
+        col = col * (1 + 0.6 * gFlash) + gFlash * (0.8 * away + 0.7 * glint + 0.08 * lens);
+    }
 
     // Antialiased edge where the field crosses the threshold.
     float alpha = saturate((field - kEdge) / max(fwidth(field), 1e-4) + 0.5);
