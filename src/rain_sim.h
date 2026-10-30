@@ -39,7 +39,24 @@ public:
     void Update(float dt);
     void AddDrop(float x, float y, float r) { Spawn(x, y, r); }  // for tests and tools
 
-    float intensity = 1.0f;  // rain rate multiplier
+    // Tunables, all 1.0 = default.
+    float intensity = 1.0f;  // how hard it rains
+    float mist = 1.0f;       // how much fine mist settles
+    float friction = 1.0f;   // how hard the glass holds drops before they run
+    float runSpeed = 1.0f;   // how fast running drops travel
+    float minDrop = 2.5f;    // smallest raindrop radius, pixels at 1440p
+    float maxDrop = 11.5f;   // largest raindrop radius, pixels at 1440p
+
+    // A windscreen wiper pivoting below the bottom edge sweeps across and
+    // back, pushing water ahead of the blade and off the screen.
+    struct Wiper {
+        bool active = false;
+        float angle = 0;           // radians from straight up, positive = right
+        float pivotX = 0, pivotY = 0;
+        float inner = 0, outer = 0;  // blade span, distance from the pivot
+    };
+    void StartWipe();
+    const Wiper& GetWiper() const { return wiper_; }
 
     const std::vector<Splat>& Drops() const { return drops_; }
     const std::vector<Splat>& Mist() const { return mist_; }
@@ -50,6 +67,7 @@ private:
     struct Drop {
         float x, y, r;
         float pin = 1;          // this drop's grip relative to the surface's, from contact line luck
+        float release = 0;      // radius at which this drop let go; it slides while above 80% of it
         float vx = 0, vy = 0;   // pixels per second
         float heading = 0;      // radians from straight down, positive = to the right
         float stickTimer = 0;   // > 0 while a running drop is momentarily snagged
@@ -76,6 +94,7 @@ private:
     void Spawn(float x, float y, float r);
     void AddMist(float x, float y, float r);
     void BuildGrid();
+    void UpdateWiper(float dt);
     template <typename F> void ForNeighbors(float x, float y, float radius, F&& f);
     void Merge(Drop& into, Drop& from);
     void ResetShape(Drop& d, bool ragged);
@@ -104,4 +123,6 @@ private:
     std::vector<float> wetTime_;  // when each cell was last wetted
 
     std::vector<Splat> drops_, mist_, erase_;
+    Wiper wiper_;
+    float wipeTime_ = 0, wipePrevAngle_ = 0;
 };

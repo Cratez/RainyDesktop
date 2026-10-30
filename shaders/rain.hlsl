@@ -25,7 +25,12 @@ cbuffer Frame : register(b0)
     float  gTime;        // seconds since start
     float  gHasDesktop;  // 1 once the first desktop frame has arrived
     float  gDecay;       // fraction of the mist and streak film that dries off this frame
-    float3 gPad;
+    float  gWiperActive;
+    float  gWiperAngle;  // radians from straight up, positive = right
+    float  gWiperInner;  // blade span, pixels from the pivot
+    float2 gWiperPivot;  // below the bottom edge
+    float  gWiperOuter;
+    float  gPad;
 };
 
 struct Splat
@@ -112,6 +117,41 @@ VSOut VSFullscreen(uint id : SV_VertexID)
 float4 PSDecay(VSOut input) : SV_Target
 {
     return float4(gDecay, gDecay, 0, 0);
+}
+
+// The wiper: a long rubber blade in a dark metal frame, carried by an arm
+// from a pivot below the screen. Drawn over the water.
+float4 PSWiper(VSOut input) : SV_Target
+{
+    if (gWiperActive < 0.5)
+        return 0;
+    float scale = gResolution.y / 1440.0;
+    float2 along = float2(sin(gWiperAngle), -cos(gWiperAngle));
+    float2 across = float2(-along.y, along.x);
+    float2 d = input.pos.xy - gWiperPivot;
+    float t = dot(d, along);
+    float u = dot(d, across);
+
+    // Blade: rubber edge in the middle, frame either side, tapered ends.
+    float bladeHalf = 9.0 * scale;
+    float ends = min(t - gWiperInner, gWiperOuter - t);
+    float bladeDist = max(abs(u) - bladeHalf, -ends);
+    float blade = saturate(0.5 - bladeDist);
+    float rubber = 1 - smoothstep(2.0 * scale, 3.0 * scale, abs(u));
+    float3 frame = lerp(0.10, 0.22, saturate(0.5 + u / (bladeHalf * 2)));  // lit along one side
+    float3 bladeCol = lerp(frame, 0.02, rubber);
+
+    // Arm: from the pivot to the middle of the blade, a little behind it.
+    float armHalf = 5.0 * scale;
+    float armLen = lerp(gWiperInner, gWiperOuter, 0.55);
+    float armU = u + bladeHalf * 2.2;
+    float armDist = max(abs(armU) - armHalf, max(-t, t - armLen));
+    float arm = saturate(0.5 - armDist);
+    float3 armCol = lerp(0.06, 0.16, saturate(0.5 + armU / (armHalf * 2)));
+
+    float a = max(blade, arm * 0.97);
+    float3 col = blade >= arm ? bladeCol : armCol;
+    return float4(col * a, a);
 }
 
 float2 WaterAt(int2 p)

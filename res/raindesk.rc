@@ -1,0 +1,4 @@
+#include "../src/resource.h"
+
+// The first icon resource is the one Explorer and the taskbar show for the exe.
+IDI_APP ICON "raindesk.ico"

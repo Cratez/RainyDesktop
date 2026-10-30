@@ -6,7 +6,9 @@
 // draw water that refracts that image. Pixels with no water are fully
 // transparent, so the desktop shows through and input goes straight to it.
 //
-// Hotkeys: Ctrl+Alt+Q quit, Ctrl+Alt+W wipe the glass, Ctrl+Alt+Up/Down rain harder/softer,
+// A drop icon in the tray opens the settings and menu (see controls.cpp).
+//
+// Hotkeys: Ctrl+Alt+Q quit, Ctrl+Alt+W run the wiper, Ctrl+Alt+Up/Down rain harder/softer,
 // Ctrl+Alt+S save a screenshot with the rain in it (ordinary screenshots can't see the overlay).
 // rain.hlsl next to the exe is recompiled live whenever it changes, and
 // errors go to raindesk.log next to the exe.
@@ -35,7 +37,9 @@
 #include <type_traits>
 #include <vector>
 
+#include "controls.h"
 #include "rain_sim.h"
+#include "resource.h"
 
 using Microsoft::WRL::ComPtr;
 namespace fs = std::filesystem;
@@ -54,7 +58,12 @@ struct FrameConstants {
     float time;
     float hasDesktop;
     float decay;
-    float pad[3];
+    float wiperActive;
+    float wiperAngle;  // radians from straight up
+    float wiperInner;
+    float wiperPivot[2];
+    float wiperOuter;
+    float pad;
 };
 
 // A dynamic structured buffer of splats that grows as needed.
@@ -73,7 +82,7 @@ struct WaterTarget {
 
 struct Shaders {
     ComPtr<ID3D11VertexShader> fullscreen, splat;
-    ComPtr<ID3D11PixelShader> drop, mist, erase, composite, desktop, decay;
+    ComPtr<ID3D11PixelShader> drop, mist, erase, composite, desktop, decay, wiper;
 };
 
 struct App {
@@ -110,6 +119,8 @@ struct App {
     bool screenshotRequested = false;
 
     RainSim sim;
+    Settings settings;
+    bool shownHidden = false;  // overlay currently hidden from the screen
 
     fs::path exeDir;
     fs::path shaderPath;
@@ -395,7 +406,8 @@ bool CompileShaders() {
     bool ok = CompileEntry("VSFullscreen", "vs_5_0", s.fullscreen) && CompileEntry("VSSplat", "vs_5_0", s.splat) &&
               CompileEntry("PSDrop", "ps_5_0", s.drop) && CompileEntry("PSMist", "ps_5_0", s.mist) &&
               CompileEntry("PSErase", "ps_5_0", s.erase) && CompileEntry("PSComposite", "ps_5_0", s.composite) &&
-              CompileEntry("PSDesktop", "ps_5_0", s.desktop) && CompileEntry("PSDecay", "ps_5_0", s.decay);
+              CompileEntry("PSDesktop", "ps_5_0", s.desktop) && CompileEntry("PSDecay", "ps_5_0", s.decay) &&
+              CompileEntry("PSWiper", "ps_5_0", s.wiper);
     if (!ok) return false;
     g.shaders = s;
     Log("Shaders loaded from %ls", g.shaderPath.c_str());
@@ -470,6 +482,10 @@ void SaveScreenshot() {
     g.ctx->OMSetBlendState(g.blendOver.Get(), nullptr, 0xffffffff);
     g.ctx->PSSetShader(g.shaders.composite.Get(), nullptr, 0);
     g.ctx->Draw(3, 0);
+    if (g.sim.GetWiper().active) {
+        g.ctx->PSSetShader(g.shaders.wiper.Get(), nullptr, 0);
+        g.ctx->Draw(3, 0);
+    }
     g.ctx->OMSetBlendState(nullptr, nullptr, 0xffffffff);
     g.ctx->CopyResource(staging.Get(), target.Get());
 
@@ -500,6 +516,13 @@ void Render(float seconds, float dt) {
         c->time = seconds;
         c->hasDesktop = g.haveDesktop ? 1.0f : 0.0f;
         c->decay = 1.0f - std::exp(-dt / 60.0f);  // mist and streaks dry over about a minute
+        const RainSim::Wiper& w = g.sim.GetWiper();
+        c->wiperActive = w.active ? 1.0f : 0.0f;
+        c->wiperAngle = w.angle;
+        c->wiperInner = w.inner;
+        c->wiperPivot[0] = w.pivotX;
+        c->wiperPivot[1] = w.pivotY;
+        c->wiperOuter = w.outer;
         g.ctx->Unmap(g.constants.Get(), 0);
     }
 
@@ -550,6 +573,14 @@ void Render(float seconds, float dt) {
         g.ctx->PSSetShaderResources(0, 3, srvs);
         g.ctx->Draw(3, 0);
 
+        if (g.sim.GetWiper().active) {
+            g.ctx->OMSetBlendState(g.blendOver.Get(), nullptr, 0xffffffff);
+            g.ctx->PSSetShader(g.shaders.wiper.Get(), nullptr, 0);
+            g.ctx->Draw(3, 0);
+            g.ctx->PSSetShader(g.shaders.composite.Get(), nullptr, 0);
+            g.ctx->OMSetBlendState(nullptr, nullptr, 0xffffffff);
+        }
+
         if (g.screenshotRequested) {
             g.screenshotRequested = false;
             SaveScreenshot();
@@ -574,17 +605,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     DestroyWindow(hwnd);
                     break;
                 case kHotkeyWipe:
-                    g.sim.Clear();
-                    g.clearMist = true;
+                    g.sim.StartWipe();
                     break;
                 case kHotkeyScreenshot:
                     g.screenshotRequested = true;
                     break;
                 case kHotkeyHarder:
                 case kHotkeySofter:
-                    g.sim.intensity *= wp == kHotkeyHarder ? 1.5f : 1.0f / 1.5f;
-                    g.sim.intensity = std::clamp(g.sim.intensity, 0.1f, 30.0f);
-                    Log("Rain intensity %.2f, %zu drops", g.sim.intensity, g.sim.DropCount());
+                    g.settings.rain *= wp == kHotkeyHarder ? 1.5f : 1.0f / 1.5f;
+                    g.settings.rain = std::clamp(g.settings.rain, 0.1f, 6.0f);
+                    controls::Save();
+                    Log("Rain amount %.2f, %zu drops", g.settings.rain, g.sim.DropCount());
                     break;
             }
             return 0;
@@ -612,6 +643,7 @@ void CreateOverlayWindow(HINSTANCE inst) {
     wc.lpfnWndProc = WndProc;
     wc.hInstance = inst;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(IDI_APP));
     wc.lpszClassName = L"RaindeskOverlay";
     RegisterClassExW(&wc);
 
@@ -670,11 +702,22 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         return 1;
     }
 
+    ControlCallbacks cb;
+    cb.wipe = [] { g.sim.StartWipe(); };
+    cb.clearNow = [] {
+        g.sim.Clear();
+        g.clearMist = true;
+    };
+    cb.screenshot = [] { g.screenshotRequested = true; };
+    cb.quit = [] { DestroyWindow(g.hwnd); };
+    controls::Init(inst, g.exeDir / L"raindesk.ini", g.settings, cb);
+
     ShowWindow(g.hwnd, SW_SHOWNOACTIVATE);
 
     using clock = std::chrono::steady_clock;
     const auto start = clock::now();
     auto last = start;
+    auto lastWipe = start;
     MSG msg{};
     while (g.running) {
         while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -688,9 +731,33 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int) {
         auto now = clock::now();
         float dt = std::min(std::chrono::duration<float>(now - last).count(), 0.05f);
         last = now;
+
+        // Hidden: take the overlay off screen and idle until it is shown again.
+        if (g.settings.hidden != g.shownHidden) {
+            g.shownHidden = g.settings.hidden;
+            ShowWindow(g.hwnd, g.shownHidden ? SW_HIDE : SW_SHOWNOACTIVATE);
+        }
+        if (g.shownHidden) {
+            MsgWaitForMultipleObjects(0, nullptr, FALSE, 100, QS_ALLINPUT);
+            continue;
+        }
+
+        const Settings& s = g.settings;
+        g.sim.intensity = s.paused ? 0.0f : s.rain;
+        g.sim.mist = s.mist;
+        g.sim.friction = s.friction;
+        g.sim.runSpeed = s.runSpeed;
+        g.sim.minDrop = s.minDrop;
+        g.sim.maxDrop = s.maxDrop;
+        if (s.autoWipeMinutes > 0 && now - lastWipe > std::chrono::minutes(s.autoWipeMinutes)) {
+            g.sim.StartWipe();
+        }
+        if (g.sim.GetWiper().active) lastWipe = now;
+
         g.sim.Update(dt);
         Render(std::chrono::duration<float>(now - start).count(), dt);
     }
+    controls::Shutdown();
     Log("---- raindesk exiting ----");
     return 0;
 }
