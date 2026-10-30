@@ -21,6 +21,9 @@ struct Settings {
     float minDrop = 2.5f;    // smallest raindrop radius, pixels at 1440p
     float maxDrop = 11.5f;   // largest raindrop radius, pixels at 1440p
     float streakLife = 1.0f; // how long rivulet trails last before they break up
+    float trailSpeed = 1.0f; // how fast a drop must run before it leaves a trail
+    float beadSpeed = 1.0f;  // how fast broken-up trails pull themselves into beads
+    float splash = 1.0f;     // how much raindrops splash on impact, 0..2
     float wind = 0.0f;       // steady wind along the glass, + blows right, -3..3
     float gusts = 1.0f;      // how much the wind gusts around that, 0..2
     int autoWipeMinutes = 0; // 0 = off

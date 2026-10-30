@@ -70,6 +70,9 @@ const SliderDef kSliders[] = {
     {L"Smallest raindrop", &Settings::minDrop, 1.0f, 10.0f, false, FormatMm},
     {L"Largest raindrop", &Settings::maxDrop, 3.0f, 25.0f, false, FormatMm},
     {L"Streak life", &Settings::streakLife, 0.3f, 4.0f, true, FormatTimes},
+    {L"Speed to leave a trail", &Settings::trailSpeed, 0.3f, 3.0f, true, FormatTimes},
+    {L"Bead-up speed", &Settings::beadSpeed, 0.3f, 3.0f, true, FormatTimes},
+    {L"Splashes", &Settings::splash, 0.0f, 2.0f, false, FormatTimes},
     {L"Wind", &Settings::wind, -3.0f, 3.0f, false, FormatWind},
     {L"Gustiness", &Settings::gusts, 0.0f, 2.0f, false, FormatTimes},
 };
@@ -184,6 +187,9 @@ void Load() {
     s.minDrop = ReadFloat(L"minDrop", def.minDrop);
     s.maxDrop = ReadFloat(L"maxDrop", def.maxDrop);
     s.streakLife = ReadFloat(L"streakLife", def.streakLife);
+    s.trailSpeed = ReadFloat(L"trailSpeed", def.trailSpeed);
+    s.beadSpeed = ReadFloat(L"beadSpeed", def.beadSpeed);
+    s.splash = ReadFloat(L"splash", def.splash);
     s.wind = ReadFloat(L"wind", def.wind);
     s.gusts = ReadFloat(L"gusts", def.gusts);
     s.autoWipeMinutes = static_cast<int>(ReadFloat(L"autoWipeMinutes", 0));
@@ -497,6 +503,9 @@ void Save() {
     WriteFloat(L"minDrop", s.minDrop);
     WriteFloat(L"maxDrop", s.maxDrop);
     WriteFloat(L"streakLife", s.streakLife);
+    WriteFloat(L"trailSpeed", s.trailSpeed);
+    WriteFloat(L"beadSpeed", s.beadSpeed);
+    WriteFloat(L"splash", s.splash);
     WriteFloat(L"wind", s.wind);
     WriteFloat(L"gusts", s.gusts);
     WriteFloat(L"autoWipeMinutes", static_cast<float>(s.autoWipeMinutes));

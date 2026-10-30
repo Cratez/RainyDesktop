@@ -105,13 +105,38 @@ The pane itself has two properties on a coarse grid of 6 px cells:
 
 **Landing.** Rain arrives at `10 × rain amount` drops per second, more during
 gusts. Radii fall between the smallest and largest raindrop settings, biased
-toward small drops. Some drops hit the glass head on and simply appear, and
-about a third of those throw a spray of small satellites. The rest arrive at a
-glancing angle (more of them the stronger the wind; see Wind below). These
-skid a few millimetres in the direction of travel, leave a couple of fine
-droplets along the skid, and settle as a head with a thinning tail behind it.
-About half throw their splash forward in a cone. A drop that lands touching
-another drop merges into it.
+toward small drops. A drop that lands touching another drop merges into it.
+What happens otherwise depends on the drop's size:
+
+- **Big drops splash** (radius above about 3.5 px at 1440p, chance set by
+  **Splashes**). The impact throws a sheet of water out in the direction of
+  travel, mostly downward because the drop is falling, with a few shorter arms
+  backwards and to the sides. About an eighth of the way in, the sheet sprays a
+  scatter of micro droplets beyond its tips. Then one of three things happens:
+  - **It pools.** Surface tension pulls the sheet back, the tips of long arms
+    tear off as small drops, and the rest gathers into one bead near where it
+    hit, a quarter to two fifths of a second after impact.
+  - **It scatters.** A big drop hitting hard has more energy than the rim can
+    hold together, so at full spread the sheet breaks into a drop or two at the
+    end of each lobe, with some left in the middle. Bigger drops do this more.
+  - **It shoots off.** A drop that came in fast and steep keeps most of its
+    momentum along the glass. Within about a tenth of a second the bulk of it
+    leaves the end of the main lobe as a running drop at up to about 30 cm/s,
+    drawing a trail behind it until it slows, and a small bead stays where it
+    hit. Steeper, faster impacts (more of them in wind) do this more.
+
+  Water is conserved: the spray, the fragments and the drops left behind add up
+  to the drop that landed.
+- **Medium drops skid** when they arrive at a glancing angle (more of them the
+  stronger the wind). They skid a few millimetres in the direction of travel,
+  leave a couple of fine droplets along the skid, and settle as a head with a
+  thinning tail.
+- **Small drops simply appear**, and some throw a few small satellites.
+
+**Wind and size.** A big drop falls fast and heavy, so the wind's angle carries
+straight through to how it hits: its splash, skid and glance lean with the wind
+(`heft` in `Impact`, from 0 for a 2 px drop to 1 for an 8 px drop). Fine
+splatter lands in almost any direction and barely notices the wind.
 
 **From above.** The pane carries on above the screen, so now and then a drop
 that gathered up there runs down into view from the top edge.
@@ -157,9 +182,14 @@ While running, a drop:
   then speeds up because it is heavier.
 - **sheds water.** On dry glass the trailing film breaks into a line of beads.
   Fast drops leave them further apart, and drops on a wet path leave fewer.
-  About half of the runs of large drops (`streaky`) also draw out a thin
-  **rivulet** (see below), which slowly drains the drop. Small drops have too
-  little water to spare and leave only beads.
+  A drop that moves faster than a critical speed also draws out a thin
+  **rivulet** (see below), which slowly drains the drop. Below that speed the
+  receding contact line keeps up with the drop and the film breaks into beads
+  instead; above it the line can't keep up and a film is left behind. The
+  critical speed is `400 px/s × Speed to leave a trail / √grip`, a little lower
+  on water-loving patches, and a bit lower again once a rivulet has started so
+  it doesn't flicker on and off. Faster drops leave wider rivulets. Only big
+  drops ever run that fast, so small drops leave only beads.
 - **stops** once it has shed below its sliding size, unless it is on a wet
   path, and becomes a resting drop again.
 - leaves the simulation when it runs off the screen.
@@ -191,12 +221,15 @@ these stages, each scaled by the **Streak life** setting:
    the rivulet into bulges about twenty widths apart and thins the necks
    between them. A neck that gets too thin snaps.
 3. **Beading up.** A segment that has pinched off pulls itself into one
-   droplet holding exactly its water: an oval along the line at first, which
-   rounds out slowly like any other resting drop.
+   droplet holding exactly its water. It doesn't happen all at once: the thin
+   ends retract toward the middle, handing their water inward node by node,
+   and the middle swells into a bead as they arrive. The retraction speeds up
+   as the bead grows, so a segment takes about a quarter of a second to
+   gather (`StartBead`, `Gather`; the **Bead-up speed** setting scales it).
 4. **Draining.** From about 2.5 s on, water flows down the line, so the top
    thins and runs dry while lower pieces fatten. A neck that snaps hands its
    water to the piece below it. Whatever is still joined up after about 7 s
-   beads up too, one droplet per wavelength.
+   beads up too, one droplet per wavelength, each gathering the same way.
 
 Because the top of a rivulet is the oldest part, the stages travel down it:
 the top drains, the middle pinches into segments, and the newest part is still

@@ -40,6 +40,7 @@ public:
     void Clear();  // wipe the glass
     void Update(float dt);
     void AddDrop(float x, float y, float r) { Spawn(x, y, r); }  // for tests and tools
+    void AddRaindrop(float x, float y, float r) { Impact(x, y, r); }  // a landing raindrop; for tests
     float WaterOnGlass() const;  // drops and rivulets, as volume (sum of r^3); for tests
 
     // Tunables, all 1.0 = default.
@@ -50,6 +51,9 @@ public:
     float minDrop = 2.5f;    // smallest raindrop radius, pixels at 1440p
     float maxDrop = 11.5f;   // largest raindrop radius, pixels at 1440p
     float streakLife = 1.0f; // how long rivulets last before they drain and break up
+    float trailSpeed = 1.0f; // how fast a drop must run before it draws out a rivulet
+    float beadSpeed = 1.0f;  // how fast a broken-up rivulet pulls itself into beads
+    float splash = 1.0f;     // how much raindrops splash on impact, 0 = they just appear
     float wind = 0.0f;       // steady wind along the glass, + blows to the right; about -3..3
     float gusts = 1.0f;      // how much the wind gusts and lulls around that, 0..2
 
@@ -91,7 +95,6 @@ private:
         Lobe lobes[4] = {};
         int lobeCount = 0;
         int rivulet = -1;       // index of the rivulet this drop is drawing out, or -1
-        bool streaky = false;   // this run drags a rivulet instead of only beads
         bool running = false;
         bool dead = false;
     };
@@ -122,6 +125,12 @@ private:
         float born;    // time_ when laid down
         float along;   // distance from the rivulet's start, pixels
         float w = 0;   // current half-width
+        // Beading up: a segment pulls back from both ends into a bead at its
+        // middle. gather is the index of that middle node; the middle node
+        // holds the bead's water in pool and how far the ends have to go in retract.
+        int gather = -1;
+        float pool = 0;
+        float retract = 0;
         bool alive = true;
     };
     struct Rivulet {
@@ -133,8 +142,38 @@ private:
         float minX, minY, maxX, maxY;  // bounds, for cheap overlap tests
         bool open = true;  // still being drawn out by its drop
     };
-    void LayRivulet(Drop& d, float step);
-    void BeadUp(Rivulet& rv, int a, int b);
+    void LayRivulet(Drop& d, float step, float excess);
+
+    // A big raindrop's impact, which plays out over a fraction of a second:
+    // the drop flattens into a thin sheet thrown out mostly in the direction
+    // it was travelling (downward, and with the wind), flings a spray of
+    // micro droplets off the rim, then one of three things happens: surface
+    // tension pulls the sheet back into a drop at the top, the rim breaks up
+    // and the sheet scatters into separate drops, or the drop came in so fast
+    // and steep that most of it keeps going and shoots off down the glass.
+    enum class Fate { Pool, Scatter, Shoot };
+    struct Splash {
+        Fate fate = Fate::Pool;
+        float x, y;        // where it hit
+        float dx, dy;      // direction of travel along the glass, unit length
+        float glance;      // 0 = head on, 1 = arrived at a steep angle and speed
+        float r;           // radius of the drop that landed
+        float volume;      // water still in the sheet
+        float age = 0;
+        float duration;
+        struct Arm {
+            float angle, length, width;
+        };
+        Arm arms[8];
+        int armCount = 0;
+        bool sprayed = false, torn = false;
+    };
+    void Launch(float x, float y, float r, float speed, float heading);  // a drop already running at speed
+    void StartSplash(float x, float y, float r, float dx, float dy, float glance);
+    void UpdateSplashes(float dt);
+    float SplashReach(const Splash& sp) const;  // how far out the sheet is now, 0..1
+    void StartBead(Rivulet& rv, int a, int b);
+    void Gather(Rivulet& rv, float dt);
 
     // Glass surface, on a coarse grid.
     void BuildSurface();
@@ -163,6 +202,7 @@ private:
 
     std::vector<Splat> drops_, mist_, erase_;
     std::vector<Rivulet> rivulets_;
+    std::vector<Splash> splashes_;
     Wiper wiper_;
     float wipeTime_ = 0, wipePrevAngle_ = 0;
 };

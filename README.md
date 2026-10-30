@@ -47,7 +47,10 @@ overflow arrow).
 | Glass grip (friction) | How hard the glass holds on to drops. Higher means bigger drops build up before they run, and running drops stutter more. |
 | Running speed | Scales how fast running drops travel. |
 | Smallest / largest raindrop | Size range of raindrops when they land (diameters assume a 27" 1440p screen). |
+| Speed to leave a trail | How fast a running drop must go before it leaves a thin trail instead of a line of beads. Lower means more trails. |
 | Streak life | How long the thin trails behind running drops last before they break into droplets and drain away. |
+| Bead-up speed | How quickly a broken trail pulls itself up into droplets once it has pinched apart. |
+| Splashes | How often big raindrops splash when they hit: a sheet thrown downward and a spray of micro droplets, then it pulls back into a bead, breaks into several drops, or shoots off down the glass with a trail. 0 means drops just appear. |
 | Wind | Steady wind along the glass, left or right. Rain hits at an angle and skids, and drops run at a slant. |
 | Gustiness | How much the wind gusts and lulls around the Wind setting. Gusts also bring bursts of heavier rain. |
 | Pause rain | Stops new rain. Water already on the glass keeps behaving. |
