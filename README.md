@@ -1,8 +1,8 @@
-# RainDesk
+# RainyDesktop
 
 Rain on the glass of your monitor.
 
-raindesk draws water drops in a transparent, click-through window that sits on
+RainyDesktop draws water drops in a transparent, click-through window that sits on
 top of everything. Each drop bends the light of whatever is really underneath it,
 so it looks like the rain is between your eyes and the pixels. You can keep using
 your desktop, browser and games normally while it rains.
