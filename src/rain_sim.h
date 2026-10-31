@@ -23,6 +23,12 @@
 //   - A jolt (a raindrop landing on or splashing into a drop, or the pane
 //     shaking in close thunder) helps a drop past its hysteresis for a
 //     moment, so drops that were nearly heavy enough to run are knocked loose.
+//   - A hard splash throws drops off in all directions. They carry their own
+//     momentum along the glass, slowed by it and pulled round by their weight,
+//     so they curve down the pane (or, if small, skid to a stop).
+//   - Shapes never jump: a running drop's tail grows and shrinks with its
+//     speed, a drop that lets go drains its lumps into its head, and one
+//     that stops pulls its tail back in over a moment.
 #pragma once
 
 #include <cstdint>
@@ -33,7 +39,9 @@ struct Splat {
     float x, y;    // center, pixels
     float rx, ry;  // sprite half-size, pixels
     float height;  // peak water thickness, pixels
-    float pad[3];
+    float weight;  // strength of its field, 0..1, so a sprite can fade in and out smoothly
+    float rough;   // how far its outline strays from an ellipse, 0 = smooth
+    float seed;    // which irregular outline, radians
 };
 static_assert(sizeof(Splat) == 32, "matches the HLSL struct");
 
@@ -53,6 +61,7 @@ public:
         float r;       // radius, pixels at this resolution
         float glance;  // 0 = head on .. 1 = fast and steep
         bool splash;   // a big drop that splashed
+        bool burst;    // ...so hard that it threw drops off in all directions
     };
     const std::vector<Hit>& Hits() const { return hits_; }
 
@@ -67,6 +76,7 @@ public:
     float trailSpeed = 1.0f; // how fast a drop must run before it draws out a rivulet
     float beadSpeed = 1.0f;  // how fast a broken-up rivulet pulls itself into beads
     float splash = 1.0f;     // how much raindrops splash on impact, 0 = they just appear
+    float burst = 1.0f;      // how often a hard splash throws drops off in all directions, 0 = never
     float wind = 0.0f;       // steady wind along the glass, + blows to the right; about -3..3
     float gusts = 1.0f;      // how much the wind gusts and lulls around that, 0..2
     float shake = 0.0f;      // how hard the pane is shaking right now (close thunder), 0..1
@@ -81,6 +91,10 @@ public:
     };
     void StartWipe();
     const Wiper& GetWiper() const { return wiper_; }
+
+    // A fingertip on the glass: while down, dragging it wipes a clear path,
+    // pushing the water ahead of it and aside. Pixels.
+    void SetFinger(bool down, float x, float y);
 
     const std::vector<Splat>& Drops() const { return drops_; }
     const std::vector<Splat>& Mist() const { return mist_; }
@@ -100,17 +114,27 @@ private:
         float eraseTimer = 0;   // resting drops slowly soak up mist around them
         float targetHeading = 0;
         float jolt = 0;         // fraction of its grip a recent knock has shaken loose, decays fast
-        // A resting drop's outline is the union of up to four blobs. When two
+        // How drawn out its rear is, 0 = round .. 1 = a long tail. It follows
+        // the speed but eases, so tails never pop in or out.
+        float tail = 0;
+        float tailHeading = 0;  // the way the tail points, lagging the heading so tails curve with the path
+        float seed = 0;         // which irregular outline it has, radians
+        float rough = 0;        // how irregular its outline is
+        float fvx = 0, fvy = 0; // velocity while flung, pixels per second, any direction
+        // A resting drop's outline is the union of up to six blobs. When two
         // drops coalesce their blobs are kept, and because the contact line is
         // pinned the combined shape only slowly pulls itself round, so merged
-        // drops stay lumpy, peanut-shaped or ragged for a long time.
+        // drops stay lumpy, peanut-shaped or ragged for a long time. A running
+        // drop's first blob is its head; any others drain into it.
         struct Lobe {
             float dx, dy, r;
         };
-        Lobe lobes[4] = {};
+        static constexpr int kMaxLobes = 6;
+        Lobe lobes[kMaxLobes] = {};
         int lobeCount = 0;
         int rivulet = -1;       // index of the rivulet this drop is drawing out, or -1
         bool running = false;
+        bool flung = false;     // thrown by a splash, still carried by its own momentum
         bool dead = false;
     };
 
@@ -124,11 +148,14 @@ private:
     template <typename F> void ForNeighbors(float x, float y, float radius, F&& f);
     void Merge(Drop& into, Drop& from);
     void ResetShape(Drop& d, bool ragged);
+    void NewDrop(Drop& d);                   // gives a drop its own outline
+    void DrawDrop(const Drop& d);
     void Steer(Drop& d);
     void UpdateWind(float dt);
     float WindAt(float x, float y) const;    // wind along the glass at a point, same scale as `wind`
     float Tilt(const Drop& d) const;         // sideways push on a drop relative to its weight
     void UpdateRivulets(float dt);
+    void UpdateFinger(float dt);
     float EraseRivulets(float x, float y, float radius, int skip = -1);  // returns the water soaked up
 
     // A thin line of water a running drop leaves behind it, as a chain of
@@ -163,11 +190,13 @@ private:
     // A big raindrop's impact, which plays out over a fraction of a second:
     // the drop flattens into a thin sheet thrown out mostly in the direction
     // it was travelling (downward, and with the wind), flings a spray of
-    // micro droplets off the rim, then one of three things happens: surface
+    // micro droplets off the rim, then one of four things happens: surface
     // tension pulls the sheet back into a drop at the top, the rim breaks up
-    // and the sheet scatters into separate drops, or the drop came in so fast
-    // and steep that most of it keeps going and shoots off down the glass.
-    enum class Fate { Pool, Scatter, Shoot };
+    // and the sheet scatters into separate drops, the drop came in so fast
+    // and steep that most of it keeps going and shoots off down the glass, or
+    // it hit so hard (often into water already there) that the sheet bursts
+    // and throws drops off in every direction.
+    enum class Fate { Pool, Scatter, Shoot, Burst };
     struct Splash {
         Fate fate = Fate::Pool;
         float x, y;        // where it hit
@@ -184,8 +213,8 @@ private:
         int armCount = 0;
         bool sprayed = false, torn = false;
     };
-    void Launch(float x, float y, float r, float speed, float heading);  // a drop already running at speed
-    void StartSplash(float x, float y, float r, float dx, float dy, float glance);
+    void Launch(float x, float y, float r, float speed, float heading);  // a drop thrown along the glass
+    Fate StartSplash(float x, float y, float r, float dx, float dy, float glance, float extra, float wet);
     void UpdateSplashes(float dt);
     float SplashReach(const Splash& sp) const;  // how far out the sheet is now, 0..1
     void StartBead(Rivulet& rv, int a, int b);
@@ -202,8 +231,10 @@ private:
     float time_ = 0;
     float dropAccum_ = 0, mistAccum_ = 0;
     float runnerAccum_ = 0;              // drops running down into view from above the screen
-    float gustSlow_ = 0, gustFast_ = 0;  // smoothed random gust state
+    float gustSlow_ = 0, gustFast_ = 0;  // smoothed random gust state: strength
+    float gustSwing_ = 0;                // and direction
     float windNow_ = 0;                  // wind with gusts, this frame
+    float sweep_ = 0;                    // phase of the gust fronts sweeping across the pane
     std::mt19937 rng_{std::random_device{}()};
     std::vector<Drop> live_;
 
@@ -222,4 +253,13 @@ private:
     std::vector<Hit> hits_;
     Wiper wiper_;
     float wipeTime_ = 0, wipePrevAngle_ = 0;
+
+    struct Finger {
+        bool down = false, wasDown = false;
+        float x = 0, y = 0, lastX = 0, lastY = 0;
+        float dirX = 0, dirY = 1;  // the way it is moving
+        float carried = 0;         // water pushed along in front of it, as volume
+        float still = 0;           // seconds it has not moved
+    };
+    Finger finger_;
 };

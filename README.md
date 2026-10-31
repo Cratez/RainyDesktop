@@ -7,16 +7,21 @@ top of everything. Each drop bends the light of whatever is really underneath it
 so it looks like the rain is between your eyes and the pixels. You can keep using
 your desktop, browser and games normally while it rains.
 
-Rain lands, splashes, beads up and merges. Drops cling to the glass until they
-are heavy enough to let go, then run down, fast or slow depending on size. They
-meander, follow earlier wet paths, leave beads and thin trails behind, and wipe
-the fine mist off the glass as they go. Wind slants the rain and pushes the
-drops around. Behind the glass, rain falls past the window, showers come and go,
-and lightning lights up every drop; close thunder rattles the pane and shakes
-drops loose. The light follows the sun: grey daylight, a blue dusk, and at
-night the warm glow of streetlit cloud with a tiny streetlight in every drop. Optional sound plays the taps of drops on
-the pane, the rain outside and the thunder that follows each flash. A wiper can
-sweep the screen clean.
+Rain lands, splashes, beads up and merges; now and then a hard splash bursts and
+throws drops off in every direction, which skid sideways and curve down the
+pane. Drops cling to the glass until they are heavy enough to let go, then run
+down, fast or slow depending on size, each with its own slightly ragged
+outline. They meander, follow earlier wet paths, leave beads and thin trails
+behind, and wipe the fine mist off the glass as they go. Wind slants the rain
+and pushes the drops around, and its gusts swing both ways. Behind the glass,
+rain falls past the window, showers come and go, and lightning lights up every
+drop; close thunder rattles the pane and shakes drops loose. The light follows
+the sun: grey daylight, a blue dusk, and at night the warm glow of streetlit
+cloud with a tiny streetlight in every drop. Optional sound plays the taps of
+drops on the pane, the rain outside heard through the glass, the gutter
+dripping, the wind, the odd car swishing past and the thunder that follows each
+flash. Hold Ctrl+Alt and move the mouse to wipe a finger through the water, or
+let a wiper sweep the screen clean.
 
 Everything is simulated from the physics of water on glass and of falling rain,
 and everything can be tuned in the settings. The second half of this file
@@ -117,6 +122,7 @@ key for each is in brackets). **Defaults** puts them all back.
 | Fine mist (`mist`) | How much tiny misting settles between the drops. |
 | Smallest / largest raindrop (`minDrop`, `maxDrop`) | Size range of raindrops when they land (diameters assume a 27" 1440p screen). |
 | Splashes (`splash`) | How often big raindrops splash when they hit: a sheet thrown downward and a spray of micro droplets, then it pulls back into a bead, breaks into several drops, or shoots off down the glass with a trail. 0 means drops just appear. |
+| Splashes that burst (`burst`) | How often a hard splash bursts and throws three to six drops off in every direction, sideways and even up; they skid along the glass and curve down as their weight takes over. Big raindrops and drops landing in water already on the glass burst most. About one every two seconds at the defaults; off means never. |
 
 **On the glass**
 
@@ -134,7 +140,7 @@ key for each is in brackets). **Defaults** puts them all back.
 | Setting | What it does |
 | --- | --- |
 | Wind (`wind`) | Steady wind, left or right. Rain hits at an angle and skids, drops run at a slant, and the rain outside falls at a slant. |
-| Gustiness (`gusts`) | How much the wind gusts and lulls around the Wind setting. Gusts also bring bursts of heavier rain. |
+| Gustiness (`gusts`) | How much the wind varies around the Wind setting: it swells and lulls, and swings, so now and then the water is pushed the other way for a moment (about 7% of the time at wind 1 and gustiness 1x). With no wind at all, gusts nudge the water both ways. Gusts also bring bursts of heavier rain. |
 | Showers come and go (`weather`) | How much the rain builds and eases on its own over a minute or two. Off keeps it steady at the rain amount. |
 | Rain outside (`outside`) | Rain falling past the window, behind the glass, slightly out of focus. In gusty wind, sheets of heavier rain sweep past. Off hides it. |
 | Daylight (`daylight`) | **auto** (the default, the left end of the slider) follows the sun for your clock and the region set in Windows. Otherwise from night (0) to day (1). It changes the light in the drops and the rain outside, not your desktop. |
@@ -152,9 +158,20 @@ key for each is in brackets). **Defaults** puts them all back.
 | Setting | What it does |
 | --- | --- |
 | Volume (`volume`) | Master volume. Off closes the audio device. |
-| Drops on the glass (`glassSound`) | Taps of raindrops hitting the pane, panned to where they land. |
-| Rain outside (`outsideSound`) | The hiss and patter of rain falling outside. |
+| Drops on the glass (`glassSound`) | Taps of raindrops hitting the pane, panned to where they land, no two alike. Splashes crackle as their droplets land again. |
+| Rain outside (`outsideSound`) | Rain falling on the street, leaves and roofs outside: a soft wash with a patter of separate drops near and far, and now and then a bubble ringing in a puddle. |
 | Thunder (`thunder`) | Thunder after each flash, later and darker the further away the strike. |
+| Wind (`windSound`) | Wind that swells and dies with the gusts; in a gale it whistles at the window frame. Silent in calm weather. |
+| Gutter dripping (`drips`) | The gutter dripping into puddles: faster the harder it rains, slowing to a stop a couple of minutes after the rain does. |
+| Cars passing (`cars`) | Now and then a car swishes past on the wet street, about one a minute by day at 1x, far fewer at night. Half by default. |
+| Window open (`windowOpen`) | **shut** (the default): everything outside is heard through the glass, which muffles the highs. Open lets it in bright and a little louder. |
+
+Plus **Finger wipe**: hold Ctrl+Alt and move the mouse to drag a fingertip
+through the water. It clears a path about 14 mm wide, pushes the water ahead of
+it in a bulge and spills the rest off its sides; let go (or stop) and the bulge
+stays behind as a drop, usually heavy enough to run. Later drops follow the wet
+path it leaves. On keyboards where AltGr types characters, AltGr counts as
+Ctrl+Alt; untick it if that gets in the way.
 
 Plus **Pause rain**, which stops new rain (and lightning); water already on the
 glass keeps behaving.
@@ -182,6 +199,7 @@ glass keeps behaving.
 | Ctrl+Alt+Up / Down | Rain harder / softer |
 | Ctrl+Alt+S | Save a screenshot with the rain |
 | Ctrl+Alt+Q | Quit |
+| Hold Ctrl+Alt, move the mouse | Wipe a finger through the water (if **Finger wipe** is ticked) |
 
 ### Screenshots
 
@@ -238,7 +256,7 @@ raindesk has five parts:
 | Water on the glass | `src/rain_sim.cpp` | Where every drop, trail and speck of mist is, frame by frame. |
 | Beyond the glass | `src/sky.cpp` | Showers, lightning, daylight, and the rain falling outside. |
 | Rendering | `shaders/rain.hlsl` | Turns all of that into refracting water, streaks and flashes on the GPU. |
-| Sound | `src/sound.cpp` | Synthesises the taps, the rain and the thunder as it plays. |
+| Sound | `src/sound.cpp` | Synthesises the taps, the rain outside, the gutter, wind, cars and thunder as it plays. |
 
 ## 1. The overlay
 
@@ -297,7 +315,10 @@ Each frame on the render thread:
 4. `Sky::Update(dt)`: showers, lightning, the shaking from thunder, daylight,
    the rain outside. Every 10 s the render thread also tells the sky the date
    and time and roughly where you are, for the sun.
-5. Hand this frame's raindrop hits and any thunder to the sound.
+5. Hand this frame's raindrop hits, the rain rate, the wind, the daylight and
+   any thunder to the sound. The finger (Ctrl+Alt and the mouse) is read on
+   the render thread too, with `GetAsyncKeyState` and `GetCursorPos`, because
+   the overlay never takes mouse input.
 6. `Render()`: capture the desktop, run the GPU passes, present with vsync.
 
 ### Units
@@ -388,29 +409,57 @@ $g = \text{clamp}(u_1 u_2 (0.7 + 0.8 |W| h))$.
 What happens next depends on size:
 
 - **Big drops splash** (radius above 3.5 px, with probability
-  $\min(0.9 \times \text{splashes}, 1)$). The drop flattens into a thin sheet
-  thrown out in 5 to 7 lobes: three in the direction of travel, $1.8$ to $3.2$
-  radii long and longer the steeper it came in ($\times(1 + 1.2g)$), and a short
-  ruff backwards and to the sides. The sheet spreads fast and slows
-  ($1 - (1-t)^2$ over the first 18% of the splash), and at 12% its rim breaks
-  into a spray of $8$ to $22$ micro droplets flung past the tips. Then one of
-  three things happens:
+  $\min(0.9 \times \text{splashes}, 1)$). A raindrop that lands inside a drop
+  already on the glass throws much of that drop's water out with its own (a
+  crown splash: Josserand and Thoroddsen): the splash takes
+  $\min\big(V_o\,U(0.3, 0.6),\ 2V_\text{rain}\big)$ of the drop's volume $V_o$
+  with it, or all of it if what is left would be mist. The drop flattens into
+  a thin sheet thrown out in 5 to 7 lobes: three in the direction of travel,
+  $1.8$ to $3.2$ radii long and longer the steeper it came in
+  ($\times(1 + 1.2g)$), and a short ruff backwards and to the sides. The sheet
+  spreads fast and slows ($1 - (1-t)^2$ over the first 18% of the splash), and
+  at 12% its rim breaks into a spray of $8$ to $22$ micro droplets flung past
+  the tips. Then one of four things happens, with $b$ growing from 0 at a 4 px
+  raindrop to 1 at 8 px:
   - **It shoots off**, with probability $p_s = (0.12 + 0.8g)\,d_y$: a drop that
     came in fast and steep keeps most of its momentum along the glass. After
     about a tenth of a second, 70 to 88% of the water leaves the end of the main
-    lobe as a running drop at 0.2 to 0.35 m/s, drawing a trail until it slows;
-    a small bead stays where it hit.
-  - **It scatters**, with probability $(1 - p_s)(0.18 + 0.3b)$ where $b$ grows
-    from 0 at 4 px to 1 at 8 px: a big drop hitting hard has more energy than
-    the rim can hold together, so at full spread the sheet breaks into a drop
-    or two at the end of each lobe (shared by lobe area), with some left in
-    the middle.
+    lobe as a [flung drop](#flung-drops) at 0.2 to 0.35 m/s, drawing a trail
+    until it slows; a small bead stays where it hit.
+  - **It bursts**, with probability
+    $p_b = (1 - p_s)\,\text{clamp}\big(B\,(0.02 + 0.12b + 0.25\,\omega),\ 0,\ 0.95\big)$,
+    where $B$ is **Splashes that burst** and $\omega$ is how wet the spot is:
+    half the film's wetness, or 1 if it landed in a drop. In high-speed footage
+    of rain on windows, a big or hard drop, and above all one landing in
+    standing water, sometimes throws its sheet out as splayed fingers whose
+    rims break off and fly across the glass in every direction, sideways and
+    even up, before their weight turns them down. Here the sheet goes out all
+    round in 6 to 8 fingers at even angles (jittered by ±0.3 of the spacing),
+    each $r\,U(1.6, 3)\,\big(1 + 0.4\cos(\alpha - \alpha_0)(0.5 + g)\big)$
+    long, longest the way the raindrop was going ($\alpha_0$), with 1.8 times
+    the usual spray. It breaks up early (at 35% of the usual time): the 3 to 5
+    longest fingers (picked by length $\times U(0.6, 1.4)$; one more for a
+    splash over 8 px) each throw a drop off their end. Those drops take 55 to
+    85% of the water between them, shared by length $\times$ width
+    $\times\,U(0.3, 1.7)$, and fly off along their finger ($\pm 0.15$ rad) as
+    [flung drops](#flung-drops) at
+
+    $$v = U(500, 1300)\,s\,\Big(0.5 + 0.7\,\frac{L}{L_\text{max}}\Big)(0.8 + 0.4g)\ \text{px/s}$$
+
+    (about 7 to 44 cm/s), the long fingers throwing theirs fastest. The rest
+    stays in the middle as a drop. In the offline tests with the default
+    settings, a splash bursts about once every two seconds.
+  - **It scatters**, with probability $(1 - p_s - p_b)(0.18 + 0.3b)$: a big
+    drop hitting hard has more energy than the rim can hold together, so at
+    full spread the sheet breaks into a drop or two at the end of each lobe
+    (shared by lobe area), with some left in the middle.
   - **It pools** otherwise: surface tension pulls the sheet back (a smoothstep
     over the last 70% of the splash), the tips of long lobes tear off as small
     drops, and the rest gathers into one bead near where it hit.
 
   A splash lasts $0.22 + 0.012\,r/s + 0.1g$ seconds, a quarter to two fifths of
-  a second.
+  a second, cut to 45% when it shoots off, 40% when it scatters and 35% when it
+  bursts. A burst knocks resting drops within $3.5r$ (see Knocks below).
 - **Medium drops skid** when they arrive at a glancing angle, with probability
   $(0.12 + 0.6\,\text{clamp}(|W|/1.5))(0.3 + 0.7h)$. They skid $r \cdot U(1, 2.6)$
   in the direction of travel, leave one to three fine droplets along the way,
@@ -435,13 +484,39 @@ which hardly matters while it rains but takes the smallest drops first, over a
 minute or two, once the rain stops. A drop drawn smaller than about 1.1 px is
 gone.
 
-**Shapes.** A resting drop is drawn as the union of up to four blobs. When two
-drops merge, both drops' blobs are kept, re-centred on the combined centre of
-mass, and folded together if there are more than four. The contact line is
-pinned, so the drop only slowly pulls itself round (blob offsets decay with a
-time constant of $60\,\text{s} \times \text{pin}$), and merged drops stay
-peanut-shaped or ragged for a long time. Heavy drops sag longer and narrower
-as they near letting go, and lean a little downwind.
+**Shapes.** Photographs of rain on a window show hardly any round drops
+bigger than a millimetre or so: the contact line catches on specks and
+scratches as a drop spreads, so its outline is lumpy, and a drop that merged
+or stopped running keeps whatever shape it was left in, because a pinned
+contact line hardly moves. A resting drop is drawn as the union of up to six
+blobs, and every outline is roughened as well in the shader (see
+[Water textures](#water-textures)):
+
+- A **new drop** bigger than 3 px is round 15% of the time. Otherwise it has
+  one bump or two (two with probability $0.3 + 0.4b$, $b$ growing from 0 at
+  3 px to 1 at 9 px), each of radius $r\,U(0.3, 0.55)$ at $r\,U(0.4, 0.7)$
+  from the centre in a random direction. The main blob takes the rest of the
+  area, so the blob areas add up to $r^2$, and the whole is re-centred on its
+  centre of mass.
+- Every drop gets its own **roughness**
+  $\rho = U(0.15, 0.55)\,\text{clamp}\big((r/s - 1.2)/4\big)$ and a random
+  phase $\sigma$, so specks under about 1.5 px are round and bigger drops each
+  have their own irregular outline.
+- When two drops **merge**, both drops' blobs are kept, re-centred on the
+  combined centre of mass; while there are more than six, the two closest are
+  folded into one (area-weighted). The merged drop keeps the rougher of the
+  two outlines.
+- A running drop that **stops** keeps its outline, lumps and all (rescaled so
+  the blob areas still add up to $r^2$), becomes at least a little ragged
+  ($\rho \ge U(0.2, 0.4)$), and pulls its tail back in over about 0.3 s
+  (see [Running](#running)) instead of snapping round.
+
+The contact line is pinned, so the drop only slowly pulls itself round (blob
+offsets decay with a time constant of $60\,\text{s} \times \text{pin}$), and
+merged drops stay peanut-shaped or ragged for a long time. Heavy drops sag
+longer and narrower as they near letting go,
+$\times\big(1 + 0.3\,\text{clamp}(r/r_\text{pin} - 0.4)\big)$ tall and the square
+root of that narrower, and lean a little downwind.
 
 ### Letting go
 
@@ -477,6 +552,11 @@ $$\tau = \frac{W}{2} \cdot \frac{r_\text{pin}}{\max(r,\ 0.3\,r_\text{pin})}$$
 
 The contact line has to hold weight and wind together, so a drop lets go when
 $r\,(1 + \tau^2)^{1/4} > r_\text{release}$, and heavy drops let go in a gust.
+
+It goes from its lowest point: the blob furthest along the way it sets off
+becomes its head, and the rest of its outline drains into it as it gets going
+(see [Running](#running)), so a lumpy drop doesn't turn round the moment it
+moves.
 
 **Knocks and shaking.** Vibration and impacts help a drop past its hysteresis
 (Noblin, Buguin and Brochard-Wyart; Brunet, Eggers and Deegan): for a moment
@@ -541,7 +621,65 @@ While running, a drop:
   flicker. Faster drops draw wider rivulets: half-width
   $\max\big(r(0.12 + 0.14e),\ 1.6s\big)$ with $e = \text{clamp}(v/v_c - 1)$.
 - **stops** once it has shed below its sliding size, unless it is on a wet
-  path.
+  path. It keeps the shape it stopped in (see [Resting](#resting)).
+
+**Shape on the move.** A running drop is a teardrop: its head, stretched along
+its path by $1 + 0.15\ell$ and narrowed across by $1 - 0.12\ell$, and two tail
+sprites behind it, close enough to fuse with the head into one outline
+($0.45 + 0.4\ell$ and $0.9 + 0.9\ell$ head radii back, 0.8 and 0.5 as wide).
+In footage of drops sliding down glass the tail grows smoothly as a drop
+speeds up and drains back slowly as it stops; it never appears at once. So
+the tail length $\ell \in [0, 1]$ eases toward its target:
+
+$$\ell \mathrel{+}= (\ell^* - \ell)\min\Big(1, \frac{\Delta t}{\tau}\Big), \qquad \ell^* = \text{clamp}\Big(\frac{v}{600\,s}\Big), \qquad \tau = \begin{cases} 0.06\ \text{s} & \ell^* > \ell \\ 0.3\ \text{s} & \text{otherwise} \end{cases}$$
+
+and the tail sprites are drawn with weight $\text{smoothstep}(0, 0.25, \ell)$,
+so the tail fades in and out instead of popping. The tail follows the path
+rather than the heading: its direction turns toward the heading by
+$\min(1, \text{step}/1.5r)$ of the difference each frame, so a drop that turns
+has a curved tail. Resting and running drops are drawn by the same code (a
+resting drop is one whose tail has drained, $\ell \to 0$ with $\tau = 0.3$ s),
+so nothing jumps when a drop starts or stops.
+
+Lumps left from letting go, and drops it has just swallowed (each shows for a
+moment as a lump where it was), drain into the head: every frame their offsets
+and radii shrink by $e^{-\Delta t/0.12\,\text{s}}$, the head's radius relaxes
+toward $r$ at the same rate, and a lump under $0.12r$ is dropped. The water is
+counted by $r$, not by the blobs, so this only changes the outline. The head
+keeps 60% of its resting roughness, and the phase of its outline advances by
+$\text{step}/4r$, so it wobbles slightly from side to side as it goes.
+
+### Flung drops
+
+`Launch`, the `flung` branch of the running update
+
+A drop thrown off by a splash (shooting off or bursting) starts with a
+velocity $\mathbf{V}$ in any direction, sideways and up included, and goes
+where its momentum takes it. It doesn't steer or stick-slip; three forces act
+on it, written as accelerations in px/s²:
+
+$$\frac{d\mathbf{V}}{dt} = F_w\,(\tau,\ 1) - F_g\,\hat{\mathbf{V}} - \kappa\,\mathbf{V}$$
+
+- its **weight**, with the wind's sideways pull (the tilt $\tau$ from
+  [Letting go](#letting-go)):
+  $F_w = \kappa v_0 \left(\frac{r}{0.8\,r_\text{pin}\,p}\right)^2$, which matches
+  the running speed law: a drop at its sliding size is pulled just as hard as
+  the grip holds it back;
+- the **grip** of the contact line, a steady force against the motion (it
+  comes from contact angle hysteresis, so it doesn't depend on speed),
+  $F_g = \kappa v_0 (1 - 0.5\,w_\text{ahead})$, weaker on wet glass. It takes
+  away at most the speed there is, so it can stop a drop but never push it
+  backwards;
+- **viscous drag**, $\kappa = 8$ /s, the same rate that settles a running drop
+  at its speed.
+
+A drop heavier than its grip ($F_w \ge F_g$) curves round under its weight and
+is handed to the ordinary running model once its heading is within 0.3 rad of
+downhill ($\arctan\tau$). A lighter one slows to below $15s$ px/s and stays
+where it stopped, as a drop that will run later if it grows. So the flung
+drops trace arcs that bend down the glass: heavy ones swing round and run on,
+small ones stop short as beads. A flung drop that swallows another adds their
+momenta as vectors.
 
 ### Rivulets
 
@@ -585,16 +723,44 @@ which later drops tend to follow and sweep up.
 
 `UpdateWind`, `WindAt`, `Tilt`
 
-The **Wind** setting $W_0$ is a steady wind along the glass. **Gustiness** $G$
-adds two Ornstein–Uhlenbeck processes (random walks pulled back to zero), a slow
-one with a time constant of 5 s and a quick one of 0.7 s:
+The **Wind** setting $W_0$ is the general direction and strength of the wind
+along the glass; **Gustiness** $G$ is its variability around that. Near
+buildings the wind swells and lulls by about a third of its strength and
+swings in direction by tens of degrees, and what pushes the water is only its
+part along the glass. So a swing can carry the water across the window the
+other way for a moment, even when the wind blows mostly one way, or straight
+at the glass with no part along it on average.
 
-$$dx = -\frac{x}{\tau}\,dt + \sqrt{\frac{2}{\tau}}\,dB, \qquad W = W_0 \max\big(1 + G(0.55\,x_\text{slow} + 0.3\,x_\text{fast}),\ 0.1\big)$$
+Three Ornstein–Uhlenbeck processes (random walks pulled back to zero, with
+unit variance),
+
+$$dx = -\frac{x}{\tau}\,dt + \sqrt{\frac{2}{\tau}}\,dB$$
+
+with time constants of 5 s (slow swells and lulls), 0.7 s (quick buffeting)
+and 4 s (swings in direction), make up the wind now:
+
+$$W = W_0\,\text{clamp}\big(1 + G(0.4\,x_\text{slow} + 0.2\,x_\text{fast}),\ 0.2,\ 2.2\big) + G\,\big(0.35 + 0.25\min(|W_0|, 3)\big)\big(0.85\,x_\text{swing} + 0.12\,x_\text{fast}\big)$$
+
+The first term is the strength, which scales the steady wind and never
+reverses it. The second is the swing, which adds to it and can. It grows
+with how windy it is overall, but is at least a breeze in a storm, so even
+with no steady wind the water drifts one way and then the other. How often
+the water is pushed against the steady wind, from 10-minute offline runs:
+
+| Wind $W_0$ | Gustiness $G$ | Time pushed the other way |
+| --- | --- | --- |
+| 0 | 1 | half (no side is preferred) |
+| 1 | 1 | 7%, in spells of half a second or more about twice a minute |
+| 1 | 2 | 18% |
 
 Gust fronts sweep across the screen,
-$W(x, y) = W\,(1 + 0.25\,G \sin(0.003x/s - 1.7t + 0.001y/s))$, so the wind is
-never the same everywhere at once. The slow gust also brings bursts of heavier
-rain, $\times\,\text{clamp}(1 + 0.5\,G\,x_\text{slow}, 0.4, 2.5)$.
+
+$$W(x, y) = W + G\,(0.1 + 0.2|W|)\sin\big(0.003x/s - \phi + 0.001y/s\big), \qquad \dot\phi = 1.7\,\text{clamp}(W, -1, 1)$$
+
+so the wind is never the same everywhere at once, and the fronts travel the
+way the wind is blowing now, slowing and turning back when it does. The slow
+gust also brings bursts of heavier rain, more so the windier it is:
+$\times\,\text{clamp}\big(1 + 0.5\,G\min(0.4 + 0.4|W_0|, 1)\,x_\text{slow},\ 0.4,\ 2.5\big)$.
 
 ### The wiper
 
@@ -605,6 +771,29 @@ overshoot. Each frame, every drop in the wedge swept since the last frame is
 moved to just ahead of the blade; pushed drops merge into a ridge that leaves
 the screen at the end of the stroke. Behind the blade the mist is erased and
 the glass is marked wet, with a few fine droplets left behind.
+
+### Finger wipe
+
+`SetFinger`, `UpdateFinger`
+
+While Ctrl+Alt are held, the mouse pointer is a fingertip on the glass, $2h$
+wide with $h = 30s$ px (about 14 mm). Each frame it moves from where it was,
+$\mathbf{p}_0$, to where it is, $\mathbf{p}_1$, and:
+
+- every drop whose centre is within $h + 0.8r$ of the segment
+  $\mathbf{p}_0\mathbf{p}_1$ (a capsule) is picked up: its volume joins the
+  water the finger **carries**;
+- along the path, in steps of $h/2$, rivulets are soaked up into the carried
+  water, the mist is erased and the glass is marked wet;
+- the film left behind beads up: at each step, half the time, a fine droplet
+  of radius $U(0.6, 1.4)s$ is left near the edges of the stroke, its water
+  taken out of what the finger carries;
+- a fingertip only holds so much, $V(1.5\,r_\text{pin})$: anything over that
+  spills off its sides as drops of $U(0.5, 0.9)\,r_\text{pin}$;
+- the carried water is drawn as a crescent bulging in front of the finger.
+
+When the finger stops for 0.3 s, or lifts, the water it carries is left as one
+drop in front of it, often big enough to run. No water is made or lost.
 
 ## 3. Beyond the glass
 
@@ -804,9 +993,23 @@ changes; see [Tuning the look](#tuning-the-look)). Each frame:
 
 Two full-screen `R16G16_FLOAT` targets hold, per pixel,
 $\big(\sum h_i f_i,\ \sum f_i\big)$, where $h_i$ is a splat's water height
-(half its radius) and $f_i = (1 - q)^2$ its smooth falloff, with $q$ the squared
-distance from the splat's centre in units of its radius. A drop on a vertical
-pane sags, so the profile is squashed above the centre ($\times 1.15$) and
+(half its radius) and $f_i = w_i (1 - q')^2$ its smooth falloff. $q$ is the
+squared distance from the splat's centre in units of its radius, and
+$w_i \in [0, 1]$ the splat's **weight**, which fades a sprite in or out (a
+running drop's tail does) without changing its size.
+
+No drop on real glass is a perfect ellipse, so each splat also has a
+roughness $\rho$ and a phase $\sigma$, and a few low harmonics around the
+outline push it in and out:
+
+$$q' = q + \rho\,H(\theta)\,q(1 - q), \qquad H(\theta) = 0.6\cos(2\theta + \sigma) + 0.4\cos(3\theta + 2.3\sigma) + 0.25\cos(5\theta + 4.1\sigma)$$
+
+where $\theta$ is the angle around the centre. The bump is largest near the
+edge and vanishes at the centre and at the sprite's border, where the field
+must still fall to zero. Since $|\rho H| \le 0.55 \times 1.25 < 1$,
+$dq'/dq = 1 + \rho H (1 - 2q) > 0$, so the field still falls steadily outward
+and the outline stays one piece; at the roughest it moves by up to about a
+tenth of the radius. A drop on a vertical pane sags, so the profile is squashed above the centre ($\times 1.15$) and
 stretched below ($\times 0.9$). Summed fields behave like **metaballs**: nearby
 blobs fuse into one smooth outline, which is how lobes, tails, trails and
 merging drops become single shapes.
@@ -894,49 +1097,179 @@ texture, reads it back and writes a PNG.
 
 Everything is synthesised as it plays, at 48 kHz stereo; there are no recordings.
 The render thread tells the synthesiser about every raindrop that hits the glass
-this frame (where, how big, how steep, whether it splashed), the rain rate and
-wind, and any thunder. A sound thread renders 1024-sample buffers (21 ms) and
-keeps four queued with `waveOut`, so a tap is heard within about 100 ms of its
-drop landing. The device is open only while the volume is above zero.
+this frame (where, how big, how steep, whether it splashed or burst), the rain
+rate, the wind and the daylight, and any thunder. A sound thread renders
+1024-sample buffers (21 ms) and keeps four queued with `waveOut`, so a tap is
+heard within about 100 ms of its drop landing. The device is open only while
+the volume is above zero.
+
+Rain is a sound texture: we recognise it by its statistics, many separate
+events at random moments, each a little different (McDermott and Simoncelli).
+Anything regular, a fixed rate of events or the same few resonances every
+time, is heard at once as synthetic. So every part below is a random stream
+of events, and nothing repeats.
 
 ### Drops on the glass
 
 A raindrop presses on the pane for its **contact time**, roughly its diameter
 over its speed, a fraction of a millisecond. That force is a half-sine pulse of
-length $0.12 + 0.25\,r_\text{mm}$ ms (bigger drops press longer, so sound lower),
-with an amplitude of $(r/1.2\,\text{mm})^{1.5}(0.6 + 0.6g)$, $\times 1.5$ for a
-splash. The drop also shatters into spray, a short burst of hiss (decaying over
-1.2 ms, 4 ms for a splash) that gives the tap its crisp edge. Each tap starts at
-a random moment within the buffer (it is about as long as a frame), so taps
-don't beat in time with the frame rate, and is panned to where it hit with
-equal-power panning, $(\cos\theta, \sin\theta)$ with
-$\theta = \frac{\pi}{4}(\text{pan} + 1)$.
+length $T_c = 0.12 + 0.25\,r_\text{mm}$ ms (bigger drops press longer, so sound
+lower), with an amplitude of $\min\big((r/1.2\,\text{mm})^{1.5}, 4\big)(0.6 + 0.6g)$,
+$\times 1.5$ for a splash. Each tap starts at a random moment within the
+buffer (it is about as long as a frame), so taps don't beat in time with the
+frame rate, and is panned to where it hit with equal-power panning,
+$(\cos\theta, \sin\theta)$ with $\theta = \frac{\pi}{4}(\text{pan} + 1)$.
 
-The pulse rings the pane's lowest bending modes. Each is a two-pole resonator,
+A window pane has a great many bending modes: for a plate of area $A$, mass per
+area $\rho h$ and bending stiffness $D$ there are about
+$\frac{A}{2}\sqrt{\rho h / D}$ per hertz, which for 1.5 m² of 4 mm glass is
+about 120 in every kilohertz. Which ones a drop excites depends on exactly
+where it strikes, and the frame and putty damp them hard, so what you hear is
+a short, dense, noise-like ring, never the same note twice. Each tap is:
 
-$$y_n = g\,x_n + 2\rho\cos\omega\,y_{n-1} - \rho^2 y_{n-2}, \qquad \rho = e^{-6.91/(T_{60} f_s)}, \quad \omega = \frac{2\pi f}{f_s}$$
+- **the ring**: white noise through a one-pole low-pass, starting at 0.6 of the
+  force and decaying over 1.5 to 4 ms ($\times(0.7 + 0.3\min(r_\text{mm}, 2))$).
+  A half-sine has little energy above about 1.5 / its length, so the low-pass
+  is at $0.6/T_c$, clamped to 0.9 to 6 kHz: a big, soft drop can't ring the
+  high modes;
+- **two body modes**, the nearer modes that happen to stand out where it
+  struck, at random frequencies $220\,e^{2.2u}$ Hz (220 Hz to 2 kHz) ringing
+  for $T_{60}$ = 8 to 30 ms. Each is a two-pole resonator,
 
-which decays by 60 dB in $T_{60}$:
+  $$y_n = g\,x_n + 2\rho\cos\omega\,y_{n-1} - \rho^2 y_{n-2}, \qquad \rho = e^{-6.91/(T_{60} f_s)}, \quad \omega = \frac{2\pi f}{f_s}$$
 
-| Mode (Hz) | 290 | 690 | 1250 | 2050 | 3150 | 4700 | 6900 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| $T_{60}$ (ms) | 100 | 75 | 55 | 40 | 30 | 20 | 14 |
+  which decays by 60 dB in $T_{60}$;
+- **spray**: the drop shattering, a burst of hiss at $0.6(0.5 + g)$ ($\times 1.4$
+  for a splash) decaying over 1.2 ms (4 ms for a splash), which gives the tap
+  its crisp edge.
 
-The right channel's modes are 3% higher, as if heard from a slightly different
-spot, which widens the sound. The pulse and spray also pass straight through a
-2.5 kHz high-pass as the tick of the impact itself.
+The pulse and the spray go through a 1.5 kHz high-pass (the tick of the impact
+itself); the ring, the body modes and a little of the pulse through a 120 Hz
+one. A splash's droplets land again around it a moment later: 2 to 5 tiny
+clicks (2 to 4 samples, at 5 to 25% of the tap) within 50 ms, or for a burst 6
+to 12 within 120 ms, spread twice as wide.
 
 ### Rain outside
 
-Many independent impacts add in power, so the loudness of rain goes as the
-square root of the rate: the bed is $0.05\sqrt{R/6}$, smoothed over 1.5 s. It is
-white noise through a 350 Hz high-pass and a 6.5 kHz low-pass (the hiss), plus
-noise through a 700 Hz low-pass (the body), swelling slowly with a 0.4 Hz random
-envelope and a little with the wind. On top is a **patter** of
-$500\,R/6$ small impacts a second: each a click that rings briefly
-(2 to 8 ms) between 1.5 and 7.4 kHz, rising slightly in pitch like the bubble a
-drop traps in a puddle (Minnaert resonance), at a random place in the stereo
-field.
+Rain outside is thousands of separate impacts a second, each a tiny burst of
+noise coloured by what it hits, from near and far (Liu, Cheng and Tong).
+Heard through a shut window there is little hiss left: the glass takes most of
+the highs away and leaves a soft, full patter (see
+[Through the window](#through-the-window)).
+
+- **When.** Impacts arrive as a Poisson stream (exponential intervals, never
+  on a beat) at $120\,R^{0.8}$ a second, with $R$ the rain rate in mm/h: about
+  500 a second in moderate rain (6 mm/h), 1800 in a downpour (30 mm/h).
+- **Where.** Raindrops fall evenly over the ground, so the number landing at
+  distance $d$ grows as $d$, while each is quieter as $1/d$. The distance is
+  drawn evenly by area from the street below the window (6 m) out to 30 m,
+  $d = \sqrt{d_0^2 + u\,(d_1^2 - d_0^2)}$, and the amplitude is
+  $\frac{4}{d}\,(0.25 + 0.75u^3)$ (most raindrops are small). That alone gives
+  the patter its few louder, nearer ticks among many soft, far ones. Each is
+  panned at random.
+- **What it hits.** Each impact is white noise through a band-pass, decaying
+  exponentially:
+
+  | Surface | Share | Centre (Hz) | Q | Decay (ms) |
+  | --- | --- | --- | --- | --- |
+  | Paving, stone: a crisp tick | 55% | $900\,e^{1.9u}$ (0.9 to 6 k) | 0.9 | 0.3 to 1.2 |
+  | Leaves, grass: a soft pat | 30% | $450\,e^{1.4u}$ (0.45 to 1.8 k) | 1.3 | 1 to 3 |
+  | Roofs, cars, bins: rings a little | 15% | $1800\,e^{1.1u}$ (1.8 to 5.4 k) | 3.5 | 0.8 to 2.5 |
+
+  With $f = (d - 6)/24$ from 0 at the nearest to 1 at the furthest, the centre
+  is lowered by $\times(1 - 0.35f)$ (air and obstacles take the highs) and
+  $0.1 + 0.6f$ of it goes to the echoes.
+- **Bubbles.** 2% of impacts land in a puddle and trap a bubble, which rings
+  at its Minnaert frequency
+
+  $$f_0 = \frac{1}{2\pi a}\sqrt{\frac{3\gamma p_0}{\rho}} \approx \frac{3.26\ \text{m/s}}{a}$$
+
+  for a bubble of radius $a$ (1.2 to 4.2 kHz here, bubbles of 0.8 to 2.7 mm).
+  Following van den Doel, it is a sine whose amplitude decays at
+  $d = 0.043f_0 + 0.0014f_0^{3/2}$ per second (viscous, thermal and radiation
+  damping), rising in pitch as it settles, $f(t) = f_0(1 + 0.1\,d\,t)$.
+- **The wash.** Rain far enough away is no longer separate impacts, just noise:
+  pink noise (equal energy per octave, Kellet's filter) through a 120 Hz
+  high-pass and a 4 kHz low-pass. Many independent impacts add in power, so
+  its level goes as the square root of the rate, $0.12\sqrt{R/6}$, smoothed
+  over 1.5 s. It breathes a little (up to ±40%, from noise smoothed at 6 Hz,
+  and a little more in wind) as sheets of rain come and go.
+- **The roar.** In a downpour rain drums on the roofs: pink noise through a
+  250 Hz low-pass, fading in from 8 mm/h and full at 28 mm/h.
+
+In the offline tests the old version of this, a hiss over a regular stream of
+identical plinks, peaked at 2 to 8 kHz through the window; the new one is
+roughly flat from 125 Hz to 4 kHz and 17 dB down at 8 kHz.
+
+### The gutter
+
+The gutter fills while it rains, toward $\text{clamp}(R/8)$ with a time constant
+of 20 s, and drains with one of 45 s, so the dripping carries on for a minute
+or two after the rain stops. Three outlets (into puddles, onto a sill), each
+with its own place, loudness, drop radius (2 to 4.5 mm) and pace (a base
+interval $T_0$ of 0.35 to 1.3 s), drip every $T_0\,g^{-0.8}\,U(0.8, 1.25)$
+seconds, $g$ the gutter level: faster as it fills, never quite regularly. Each
+drip is a soft plop (noise through a 500 to 900 Hz band-pass, decaying over
+3 ms) and, three times in four, a bubble at its Minnaert frequency,
+$3.26/r_\text{mm}$ kHz ±6%: a plink from a small drop, a bloop from a big one.
+
+### Wind
+
+The wind you hear is the gusting wind of the simulation (see
+[Wind](#wind)), $|W|$ smoothed over 0.3 s: pink noise through a low-pass at
+$160 + 260|W|$ Hz plus 0.6 of a band-pass at $300 + 140|W|$ Hz (Q 2), so gusts
+are both louder and brighter, at a level of
+
+$$\text{clamp}\Big(\frac{|W| - 0.25}{2.75},\ 0,\ 1.2\Big)^{1.5}$$
+
+which is silent in a breeze and swells and dies with each gust. Above
+$|W| = 1.7$ it **whistles** through a gap in the frame: noise through a narrow
+band-pass (Q 30) at $520 + 160(|W| - 1.6)$ Hz, at a level of
+$\min(|W| - 1.7, 1.3)^2$. The whistle is at the window itself, so the window
+filter doesn't touch it.
+
+### Cars
+
+Now and then a car swishes past on the wet street, at exponential intervals
+averaging $\big(35 + 120(1 - \text{daylight})\big)/C$ seconds, where $C$ is
+**Cars passing**: at the default 0.5, about one every 70 s by day and one every
+five minutes at night. Each passes at 8 to 16 m/s, 8 to 30 m away. With
+$x = (t - t_c)\,v/d$ its time from the closest point, in units of the time it
+takes to swing 45° off,
+
+$$a \propto \frac{1}{d\,\sqrt{1 + x^2}}\,(0.3 + 0.7\,\text{wet}), \qquad \text{pan} = 0.85\,\frac{x}{\sqrt{1 + x^2}}$$
+
+so it grows and fades as one over its distance and pans across. Its sound is
+the tyres' hiss (noise through a band-pass at 0.8 to 1.5 kHz, Q 0.6) and a
+rumble (noise below 110 Hz). It is brighter coming than going (a low-pass at
+$3500 - 1500\tanh x$ Hz): the tyres throw their spray backwards, and the
+Doppler shift. A wet road is louder: it gets wet over about a minute of rain
+(time constant 60 s) and dries over a quarter of an hour (900 s). A pass lasts
+$9\,d/v + 2$ seconds.
+
+### Echoes
+
+The far impacts, bubbles, drips and cars send part of their sound to a small
+**feedback delay network** (Stautner and Puckette; Jot), standing in for the
+buildings across the street: four delay lines of 1601, 1999, 2377 and 2843
+samples (33 to 59 ms, no common factors), mixed through a 4 × 4 Hadamard
+matrix (which keeps the energy and feeds every line into every other), each
+with feedback gain $10^{-3L/(T_{60} f_s)}$ for $T_{60} = 0.9$ s and a 3 kHz
+one-pole low-pass. It comes back at half level.
+
+### Through the window
+
+Everything outside is heard through the glass unless **Window open** is
+turned up. Glass passes sound less the higher it goes, by about 6 dB an octave
+(the **mass law**: transmission loss $\approx 20\log_{10}(m f) - 47$ dB for a
+pane of $m$ kg/m²), except near its **coincidence frequency**, where bending
+waves in the pane travel as fast as sound in the air and it lets much more
+through: $f_c \approx 12/h_\text{mm}$ kHz for glass, about 3 kHz for a 4 mm
+pane (Fahy). The shut window is a one-pole low-pass at 650 Hz followed by a
++8 dB peak at 3 kHz (Q 1.4). Window open blends toward the unfiltered sound,
+$y = y_\text{shut} + o\,(y_\text{open} - y_\text{shut})$, smoothed over 0.3 s.
+The taps on the glass and the thunder are not filtered (the taps are on the
+pane; thunder has its own distance filter).
 
 ### Thunder
 
@@ -967,9 +1300,11 @@ frame, so it chatters in bursts while the boom and rumble are loudest. Knocks
 come at random at up to $500\,S\,b(t)\,m(t)$ a second, where $b$ and $m$ are the
 boom and rumble envelopes and $S$ the rattle strength, gated by the rumble's
 held noise so they cluster into bursts (a twelfth of the rate between them).
-Each knock is a sharp 3 to 8 sample pulse with a 0.6 ms buzz of glass on frame,
-fed into the same glass modes as the raindrop taps, so it is the pane itself
-you hear. It is scaled by the Thunder and Drops on the glass levels.
+Each knock is a sharp 3 to 8 sample pulse with a 0.6 ms buzz of glass on
+frame, a 6 ms ring of the pane (low-passed at 5 kHz) and two modes of a loose
+pane, at $500\,e^{2u}$ Hz ringing for 30 to 80 ms, so it is the pane itself you
+hear. Like the taps it is on the glass, so the window filter doesn't touch it.
+It is scaled by the Thunder and Drops on the glass levels.
 
 A gentle `tanh` limiter on the output keeps a close clap from clipping.
 
@@ -1019,6 +1354,25 @@ A gentle `tanh` limiter on the output keeps a close clap from clipping.
   between pinned and mobile contact line oscillations", Eur. Phys. J. E 14
   (2004); P. Brunet, J. Eggers, R. D. Deegan, "Vibration-induced climbing of
   drops", PRL 99 (2007): vibration frees pinned contact lines.
+- C. Josserand, S. T. Thoroddsen, "Drop impact on a solid surface", Annu.
+  Rev. Fluid Mech. 48 (2016): spreading sheets, rim breakup, prompt and
+  corona splashes, and splashes into a liquid film.
+- K. van den Doel, "Physically based models for liquid sounds", ACM Trans.
+  Applied Perception 2 (2005): bubble damping and the rising pitch of a
+  bubble near the surface.
+- M. Minnaert, "On musical air-bubbles and the sounds of running water",
+  Phil. Mag. 16 (1933): the resonance of a bubble.
+- J. H. McDermott, E. P. Simoncelli, "Sound texture perception via statistics
+  of the auditory periphery", Neuron 71 (2011): rain and other textures are
+  heard by their statistics, so random event streams, not loops or fixed
+  resonances.
+- F. Fahy, P. Gardonio, *Sound and Structural Vibration* (2nd ed., 2007): the
+  mass law, the coincidence frequency and the modal density of plates.
+- J. Stautner, M. Puckette, "Designing multi-channel reverberators", Computer
+  Music J. 6 (1982); J.-M. Jot, A. Chaigne, "Digital delay networks for
+  designing artificial reverberators", AES 90th Convention (1991): the
+  feedback delay network.
+- P. Kellet, "Filter to make pink noise from white" (musicdsp.org, 1999).
 - Microsoft Docs: Desktop Duplication API, DirectComposition,
   `SetWindowDisplayAffinity`, waveOut.
 
@@ -1027,9 +1381,9 @@ A gentle `tanh` limiter on the output keeps a close clap from clipping.
 | Path | Contents |
 | --- | --- |
 | `src/main.cpp` | Window, Direct3D 11, desktop capture, render passes, hotkeys, main loop |
-| `src/rain_sim.h`, `src/rain_sim.cpp` | Water on the glass: drops, splashes, trails, mist, wind, the wiper |
+| `src/rain_sim.h`, `src/rain_sim.cpp` | Water on the glass: drops, splashes, flung drops, trails, mist, wind, the wiper, the finger |
 | `src/sky.h`, `src/sky.cpp` | Beyond the glass: showers, lightning and the shaking from thunder, daylight, the rain outside |
-| `src/sound.h`, `src/sound.cpp` | Sound synthesis and playback |
+| `src/sound.h`, `src/sound.cpp` | Sound synthesis (glass taps, rain outside, gutter, wind, cars, thunder, the window) and playback |
 | `src/controls.h`, `src/controls.cpp` | Tray icon, menu, settings window, `raindesk.ini` (one table drives the sliders and the ini) |
 | `src/resource.h` | Resource ids |
 | `res/` | App icon (`raindesk.ico`, a PNG copy) and the `.rc` that builds it and the shaders into the exe |

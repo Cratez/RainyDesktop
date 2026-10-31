@@ -24,6 +24,7 @@ struct Settings {
     float trailSpeed = 1.0f; // how fast a drop must run before it leaves a trail
     float beadSpeed = 1.0f;  // how fast broken-up trails pull themselves into beads
     float splash = 1.0f;     // how much raindrops splash on impact, 0..2
+    float burst = 1.0f;      // how often a hard splash throws drops off in all directions, 0..3
     float refraction = 1.0f; // how strongly drops bend what is behind them
     float wind = 0.0f;       // steady wind along the glass, + blows right, -3..3
     float gusts = 1.0f;      // how much the wind gusts around that, 0..2
@@ -37,8 +38,13 @@ struct Settings {
     float glassSound = 1.0f; // mix: drops tapping on the glass
     float outsideSound = 1.0f; // mix: rain falling outside
     float thunder = 1.0f;    // mix: thunder after lightning
+    float windSound = 1.0f;  // mix: wind, with the gusts
+    float drips = 1.0f;      // mix: the gutter dripping outside
+    float cars = 0.5f;       // mix: cars passing on the wet street
+    float windowOpen = 0.0f; // 0 = shut: you hear outside through the glass .. 1 = open
     int autoWipeMinutes = 0; // 0 = off
     bool paused = false;     // no new rain
+    bool finger = true;      // hold Ctrl+Alt and move the mouse to wipe a finger through the water
     bool hidden = false;     // overlay hidden
 };
 

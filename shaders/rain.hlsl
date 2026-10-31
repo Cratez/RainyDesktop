@@ -46,7 +46,9 @@ struct Splat
     float2 pos;     // pixels
     float2 radius;  // sprite half-size, pixels
     float  height;  // peak thickness, pixels
-    float3 pad;
+    float  weight;  // strength of its field, 0..1, so sprites fade in and out smoothly
+    float  rough;   // how far its outline strays from an ellipse, 0 = smooth
+    float  seed;    // which irregular outline, radians
 };
 StructuredBuffer<Splat> gSplats : register(t0);
 
@@ -68,6 +70,7 @@ struct SplatOut
     float4 pos    : SV_Position;
     float2 d      : TEXCOORD0;  // -1..1 across the sprite
     float  height : TEXCOORD1;
+    float3 shape  : TEXCOORD2;  // weight, rough, seed
 };
 
 SplatOut VSSplat(uint vid : SV_VertexID, uint iid : SV_InstanceID)
@@ -79,29 +82,43 @@ SplatOut VSSplat(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     o.pos = float4(px / gResolution * float2(2, -2) + float2(-1, 1), 0, 1);
     o.d = corner;
     o.height = s.height;
+    o.shape = float3(s.weight, s.rough, s.seed);
     return o;
 }
 
 // Drops on a vertical pane sag: flatter on top, fuller at the bottom.
 // Returns (height * field, field).
-float2 DropProfile(float2 d, float height)
+//
+// No drop on real glass is a perfect ellipse: its contact line catches on
+// specks and scratches. A few low harmonics around the outline (2, 3 and 5
+// lobes, phased by the seed) push it in and out by up to about a tenth of
+// its radius. The bump is q (1 - q) times the harmonics, so it is largest
+// near the edge and vanishes at the centre and at the sprite's border,
+// where the field must still fall to zero.
+float2 DropProfile(float2 d, float height, float3 shape)
 {
     d.y *= d.y < 0 ? 1.15 : 0.9;
     float q = dot(d, d);
     if (q >= 1) discard;
+    if (shape.y > 0)
+    {
+        float a = atan2(d.y, d.x), s = shape.z;
+        float h = 0.6 * cos(2 * a + s) + 0.4 * cos(3 * a + 2.3 * s) + 0.25 * cos(5 * a + 4.1 * s);
+        q += shape.y * h * q * (1 - q);
+    }
     float c = 1 - q;
-    c *= c;
+    c *= c * shape.x;
     return float2(height * c, c);
 }
 
 float4 PSDrop(SplatOut i) : SV_Target
 {
-    return float4(DropProfile(i.d, i.height), 0, 0);
+    return float4(DropProfile(i.d, i.height, i.shape), 0, 0);
 }
 
 float4 PSMist(SplatOut i) : SV_Target
 {
-    return float4(DropProfile(i.d, i.height), 0, 0);
+    return float4(DropProfile(i.d, i.height, i.shape), 0, 0);
 }
 
 // Blended as dst * (1 - src): wipes mist where running drops pass.

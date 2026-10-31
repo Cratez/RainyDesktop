@@ -13,6 +13,7 @@
 //
 // Hotkeys: Ctrl+Alt+Q quit, Ctrl+Alt+W run the wiper, Ctrl+Alt+Up/Down rain harder/softer,
 // Ctrl+Alt+S save a screenshot with the rain in it (ordinary screenshots can't see the overlay).
+// Holding Ctrl+Alt and moving the mouse wipes a finger through the water.
 // The shaders (rain.hlsl) are built into the exe. A rain.hlsl next to the exe
 // takes their place and is recompiled live whenever it changes, for tuning;
 // errors go to raindesk.log next to the exe.
@@ -863,9 +864,19 @@ void RenderLoop() {
         g.sim.trailSpeed = s.trailSpeed;
         g.sim.beadSpeed = s.beadSpeed;
         g.sim.splash = s.splash;
+        g.sim.burst = s.burst;
         g.sim.wind = s.wind;
         g.sim.gusts = s.gusts;
         g.sim.shake = g.sky.Shake() * s.shake;
+        // A fingertip on the glass while Ctrl+Alt are held: the overlay
+        // never takes the mouse, so ask where it is.
+        {
+            POINT cursor{};
+            bool down = s.finger && GetAsyncKeyState(VK_CONTROL) < 0 && GetAsyncKeyState(VK_MENU) < 0 &&
+                        GetCursorPos(&cursor);
+            g.sim.SetFinger(down, static_cast<float>(cursor.x - g.bounds.left),
+                            static_cast<float>(cursor.y - g.bounds.top));
+        }
         if (s.autoWipeMinutes > 0 && now - lastWipe > std::chrono::minutes(s.autoWipeMinutes)) {
             g.sim.StartWipe();
         }
@@ -876,10 +887,12 @@ void RenderLoop() {
 
         // Sound: a tap for every raindrop that hit the glass, thunder for every flash.
         g.sound.SetLevels(s.volume, s.glassSound, s.outsideSound, s.thunder);
-        g.sound.SetWeather(g.sky.RainRate(), g.sim.WindNow());
+        g.sound.SetAmbience(s.windSound, s.drips, s.cars, s.windowOpen);
+        g.sound.SetWeather(g.sky.RainRate(), g.sim.WindNow(), g.sky.Daylight());
         const float mmPerPixel = 336.0f / static_cast<float>(g.height);  // a 27" panel is 336 mm tall
         for (const RainSim::Hit& h : g.sim.Hits())
-            g.sound.Tap(h.x / static_cast<float>(g.width) * 2.0f - 1.0f, h.r * mmPerPixel, h.glance, h.splash);
+            g.sound.Tap(h.x / static_cast<float>(g.width) * 2.0f - 1.0f, h.r * mmPerPixel, h.glance, h.splash,
+                        h.burst);
         for (const ThunderEvent& t : g.sky.TakeThunder())
             g.sound.Thunder(t.delay, t.distance, t.power, t.pan, std::min(t.rattle * s.shake, 1.0f));
 

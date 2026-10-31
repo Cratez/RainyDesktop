@@ -38,6 +38,7 @@ enum ControlId : int {
     kIdSliderBase = 1000,  // + slider index
     kIdValueBase = 1100,   // + slider index
     kIdPause = 1200,
+    kIdFinger,
     kIdWipe,
     kIdDefaults,
     kIdClose,
@@ -86,6 +87,12 @@ void FormatDaylight(float v, wchar_t* out, size_t n) {
     else
         swprintf_s(out, n, L"%d%%", static_cast<int>(std::lround(v * 100.0f)));
 }
+void FormatOpen(float v, wchar_t* out, size_t n) {
+    if (v < 0.02f)
+        swprintf_s(out, n, L"shut");
+    else
+        swprintf_s(out, n, L"%d%%", static_cast<int>(std::lround(v * 100.0f)));
+}
 // Radius in pixels at 1440p on a 27" panel (about 0.233 mm per pixel) to a diameter in mm.
 void FormatMm(float v, wchar_t* out, size_t n) { swprintf_s(out, n, L"%.1f mm", v * 2.0f * 0.233f); }
 
@@ -95,6 +102,7 @@ const SliderDef kSliders[] = {
     {nullptr, L"Smallest raindrop", L"minDrop", &Settings::minDrop, 1.0f, 10.0f, false, FormatMm, 0},
     {nullptr, L"Largest raindrop", L"maxDrop", &Settings::maxDrop, 3.0f, 25.0f, false, FormatMm, 0},
     {nullptr, L"Splashes", L"splash", &Settings::splash, 0.0f, 2.0f, false, FormatTimes, 0},
+    {nullptr, L"Splashes that burst", L"burst", &Settings::burst, 0.0f, 3.0f, false, FormatOffTimes, 0},
     {L"On the glass", L"Glass grip (friction)", L"friction", &Settings::friction, 0.4f, 2.5f, true, FormatTimes, 0},
     {nullptr, L"Running speed", L"runSpeed", &Settings::runSpeed, 0.3f, 3.0f, true, FormatTimes, 0},
     {nullptr, L"Speed to leave a trail", L"trailSpeed", &Settings::trailSpeed, 0.3f, 3.0f, true, FormatTimes, 0},
@@ -107,13 +115,18 @@ const SliderDef kSliders[] = {
     {nullptr, L"Rain outside", L"outside", &Settings::outside, 0.0f, 3.0f, false, FormatOffTimes, 1},
     // Below zero (the left end of the slider) the daylight follows the sun.
     {nullptr, L"Daylight", L"daylight", &Settings::daylight, -0.1f, 1.0f, false, FormatDaylight, 1},
-    {L"Storm", L"Lightning", L"lightning", &Settings::lightning, 0.0f, 3.0f, false, FormatOffTimes, 1},
-    {nullptr, L"Flash brightness", L"flash", &Settings::flash, 0.0f, 2.0f, false, FormatTimes, 1},
-    {nullptr, L"Thunder shakes the glass", L"shake", &Settings::shake, 0.0f, 2.0f, false, FormatOffTimes, 1},
+    {L"Storm", L"Lightning", L"lightning", &Settings::lightning, 0.0f, 3.0f, false, FormatOffTimes, 0},
+    {nullptr, L"Flash brightness", L"flash", &Settings::flash, 0.0f, 2.0f, false, FormatTimes, 0},
+    {nullptr, L"Thunder shakes the glass", L"shake", &Settings::shake, 0.0f, 2.0f, false, FormatOffTimes, 0},
     {L"Sound", L"Volume", L"volume", &Settings::volume, 0.0f, 1.0f, false, FormatPercent, 1},
     {nullptr, L"Drops on the glass", L"glassSound", &Settings::glassSound, 0.0f, 2.0f, false, FormatOffTimes, 1},
     {nullptr, L"Rain outside", L"outsideSound", &Settings::outsideSound, 0.0f, 2.0f, false, FormatOffTimes, 1},
     {nullptr, L"Thunder", L"thunder", &Settings::thunder, 0.0f, 2.0f, false, FormatOffTimes, 1},
+    {nullptr, L"Wind", L"windSound", &Settings::windSound, 0.0f, 2.0f, false, FormatOffTimes, 1},
+    {nullptr, L"Gutter dripping", L"drips", &Settings::drips, 0.0f, 2.0f, false, FormatOffTimes, 1},
+    {nullptr, L"Cars passing", L"cars", &Settings::cars, 0.0f, 2.0f, false, FormatOffTimes, 1},
+    // Shut, outside is heard through the glass: muffled, the highs taken away.
+    {nullptr, L"Window open", L"windowOpen", &Settings::windowOpen, 0.0f, 1.0f, false, FormatOpen, 1},
 };
 constexpr int kSliderCount = static_cast<int>(sizeof(kSliders) / sizeof(kSliders[0]));
 constexpr int kSliderSteps = 200;
@@ -222,6 +235,7 @@ void Load() {
     for (const SliderDef& d : kSliders) s.*d.field = std::clamp(ReadFloat(d.key, def.*d.field), d.lo, d.hi);
     s.autoWipeMinutes = static_cast<int>(ReadFloat(L"autoWipeMinutes", 0));
     s.paused = ReadFloat(L"paused", 0) != 0;
+    s.finger = ReadFloat(L"finger", def.finger ? 1.0f : 0.0f) != 0;
 }
 
 // ---------------------------------------------------------------- settings window
@@ -247,6 +261,7 @@ void SyncWindow() {
         ShowValue(i);
     }
     CheckDlgButton(st.window, kIdPause, st.settings->paused ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(st.window, kIdFinger, st.settings->finger ? BST_CHECKED : BST_UNCHECKED);
 }
 
 void BuildWindow(HWND hwnd) {
@@ -289,6 +304,8 @@ void BuildWindow(HWND hwnd) {
     }
     int y = std::max(colY[0], colY[1]) + S(8);
     Child(L"BUTTON", L"Pause rain", BS_AUTOCHECKBOX | WS_TABSTOP, x0, y, S(200), S(24), kIdPause);
+    Child(L"BUTTON", L"Finger wipe: hold Ctrl+Alt and move the mouse",
+          BS_AUTOCHECKBOX | WS_TABSTOP, x0 + columnW, y, columnW - S(24), S(24), kIdFinger);
     y += S(36);
     const int bw = S(110), bh = S(30), gap = S(10);
     Child(L"BUTTON", L"Wipe now", BS_PUSHBUTTON | WS_TABSTOP, x0, y, bw, bh, kIdWipe);
@@ -327,6 +344,10 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             switch (LOWORD(wp)) {
                 case kIdPause:
                     st.settings->paused = IsDlgButtonChecked(hwnd, kIdPause) == BST_CHECKED;
+                    Changed();
+                    break;
+                case kIdFinger:
+                    st.settings->finger = IsDlgButtonChecked(hwnd, kIdFinger) == BST_CHECKED;
                     Changed();
                     break;
                 case kIdWipe:
@@ -542,6 +563,7 @@ void Save() {
     for (const SliderDef& d : kSliders) WriteFloat(d.key, s.*d.field);
     WriteFloat(L"autoWipeMinutes", static_cast<float>(s.autoWipeMinutes));
     WriteFloat(L"paused", s.paused ? 1.0f : 0.0f);
+    WriteFloat(L"finger", s.finger ? 1.0f : 0.0f);
 }
 
 }  // namespace controls
